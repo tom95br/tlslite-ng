@@ -5,6 +5,7 @@
 #   Dimitris Moraitis - Anon ciphersuites
 #   Yngve Pettersen (ported by Paul Sokolovsky) - TLS 1.2
 #   Hubert Kario - 'extensions' cleanup
+#   Tom-Lukas Breitkopf - FIDO2 messages
 #
 # See the LICENSE file for legal information regarding use of this file.
 
@@ -21,6 +22,11 @@ from .utils.tackwrapper import *
 from .utils.deprecations import deprecated_attrs, deprecated_params
 from .extensions import *
 from .utils.format_output import none_as_unknown
+from fido2.cbor import dumps, loads
+from fido2.client import ClientData
+from fido2.ctap2 import AttestedCredentialData, AuthenticatorData
+from fido2.cose import CoseKey
+from enum import IntEnum, unique
 
 
 class RecordHeader(object):
@@ -75,14 +81,14 @@ class RecordHeader3(RecordHeader):
             return str(matching[0])
 
     def __str__(self):
-        return "SSLv3 record,version({0[0]}.{0[1]}),"\
-                "content type({1}),length({2})".format(self.version,
-                                                       self.typeName,
-                                                       self.length)
+        return "SSLv3 record,version({0[0]}.{0[1]})," \
+               "content type({1}),length({2})".format(self.version,
+                                                      self.typeName,
+                                                      self.length)
 
     def __repr__(self):
-        return "RecordHeader3(type={0}, version=({1[0]}.{1[1]}), length={2})".\
-                format(self.type, self.version, self.length)
+        return "RecordHeader3(type={0}, version=({1[0]}.{1[1]}), length={2})". \
+            format(self.type, self.version, self.length)
 
 
 class RecordHeader2(RecordHeader):
@@ -197,12 +203,12 @@ class Alert(object):
     @property
     def levelName(self):
         return none_as_unknown(AlertLevel.toRepr(self.level),
-                             self.level)
+                               self.level)
 
     @property
     def descriptionName(self):
         return none_as_unknown(AlertDescription.toRepr(self.description),
-                             self.description)
+                               self.description)
 
     def __str__(self):
         return "Alert, level:{0}, description:{1}".format(self.levelName,
@@ -292,7 +298,6 @@ class HelloMessage(HandshakeMsg):
             self.extensions[:] = (i for i in self.extensions
                                   if i.extType != extType)
 
-
     def _addOrRemoveExt(self, extType, add):
         """
         Remove or add an empty extension of given type.
@@ -339,8 +344,8 @@ class ClientHello(HelloMessage):
         self.client_version = (0, 0)
         self.random = bytearray(32)
         self.session_id = bytearray(0)
-        self.cipher_suites = []         # a list of 16-bit values
-        self.compression_methods = []   # a list of 8-bit values
+        self.cipher_suites = []  # a list of 16-bit values
+        self.compression_methods = []  # a list of 8-bit values
 
     def __str__(self):
         """
@@ -348,16 +353,16 @@ class ClientHello(HelloMessage):
 
         :rtype: str
         """
-        if self.session_id.count(bytearray(b'\x00')) == len(self.session_id)\
+        if self.session_id.count(bytearray(b'\x00')) == len(self.session_id) \
                 and len(self.session_id) != 0:
             session = "bytearray(b'\\x00'*{0})".format(len(self.session_id))
         else:
             session = repr(self.session_id)
-        ret = "client_hello,version({0[0]}.{0[1]}),random(...),"\
-              "session ID({1!s}),cipher suites({2!r}),"\
+        ret = "client_hello,version({0[0]}.{0[1]}),random(...)," \
+              "session ID({1!s}),cipher suites({2!r})," \
               "compression methods({3!r})".format(
-                  self.client_version, session,
-                  self.cipher_suites, self.compression_methods)
+            self.client_version, session,
+            self.cipher_suites, self.compression_methods)
 
         if self.extensions is not None:
             ret += ",extensions({0!r})".format(self.extensions)
@@ -370,12 +375,12 @@ class ClientHello(HelloMessage):
 
         :rtype: str
         """
-        return "ClientHello(ssl2={0}, client_version=({1[0]}.{1[1]}), "\
-               "random={2!r}, session_id={3!r}, cipher_suites={4!r}, "\
+        return "ClientHello(ssl2={0}, client_version=({1[0]}.{1[1]}), " \
+               "random={2!r}, session_id={3!r}, cipher_suites={4!r}, " \
                "compression_methods={5}, extensions={6})".format(
-                   self.ssl2, self.client_version, self.random,
-                   self.session_id, self.cipher_suites,
-                   self.compression_methods, self.extensions)
+            self.ssl2, self.client_version, self.random,
+            self.session_id, self.cipher_suites,
+            self.compression_methods, self.extensions)
 
     @property
     def certificate_types(self):
@@ -603,11 +608,11 @@ class ClientHello(HelloMessage):
             p.setLengthCheck(cipherSpecsLength +
                              sessionIDLength +
                              randomLength)
-            self.cipher_suites = p.getFixList(3, cipherSpecsLength//3)
+            self.cipher_suites = p.getFixList(3, cipherSpecsLength // 3)
             self.session_id = p.getFixBytes(sessionIDLength)
             self.random = p.getFixBytes(randomLength)
             if len(self.random) < 32:
-                zeroBytes = 32-len(self.random)
+                zeroBytes = 32 - len(self.random)
                 self.random = bytearray(zeroBytes) + self.random
             self.compression_methods = [0]  # Fake this value
             p.stopLengthCheck()
@@ -690,7 +695,6 @@ class ClientHello(HelloMessage):
 
         return bts[:-length]
 
-
     def write(self):
         """Serialise object to on the wire data."""
         if self.ssl2:
@@ -744,11 +748,11 @@ class ServerHello(HelloMessage):
         self._tack_ext = None
 
     def __str__(self):
-        base = "server_hello,length({0}),version({1[0]}.{1[1]}),random(...),"\
-                "session ID({2!r}),cipher({3:#x}),compression method({4})"\
-                .format(len(self.write())-4, self.server_version,
-                        self.session_id, self.cipher_suite,
-                        self.compression_method)
+        base = "server_hello,length({0}),version({1[0]}.{1[1]}),random(...)," \
+               "session ID({2!r}),cipher({3:#x}),compression method({4})" \
+            .format(len(self.write()) - 4, self.server_version,
+                    self.session_id, self.cipher_suite,
+                    self.compression_method)
 
         if self.extensions is None:
             return base
@@ -759,12 +763,12 @@ class ServerHello(HelloMessage):
         return base + ret
 
     def __repr__(self):
-        return "ServerHello(server_version=({0[0]}, {0[1]}), random={1!r}, "\
-                "session_id={2!r}, cipher_suite={3}, compression_method={4}, "\
-                "_tack_ext={5}, extensions={6!r})".format(
-                    self.server_version, self.random, self.session_id,
-                    self.cipher_suite, self.compression_method, self._tack_ext,
-                    self.extensions)
+        return "ServerHello(server_version=({0[0]}, {0[1]}), random={1!r}, " \
+               "session_id={2!r}, cipher_suite={3}, compression_method={4}, " \
+               "_tack_ext={5}, extensions={6!r})".format(
+            self.server_version, self.random, self.session_id,
+            self.cipher_suite, self.compression_method, self._tack_ext,
+            self.extensions)
 
     @property
     def tackExt(self):
@@ -1083,7 +1087,7 @@ class CertificateEntry(object):
 
     def __repr__(self):
         return "CertificateEntry(certificate={0!r}, extensions={1!r})".format(
-                self.certificate, self.extensions)
+            self.certificate, self.extensions)
 
 
 @deprecated_attrs({"cert_chain": "certChain"})
@@ -1113,7 +1117,7 @@ class Certificate(HandshakeMsg):
         if isinstance(cert_chain, X509CertChain):
             self._cert_chain = cert_chain
             self.certificate_list = [CertificateEntry(self.certificateType)
-                                     .create(i, []) for i
+                                         .create(i, []) for i
                                      in cert_chain.x509List]
         elif cert_chain is None:
             self.certificate_list = []
@@ -1151,7 +1155,7 @@ class Certificate(HandshakeMsg):
                 x509 = X509()
                 x509.parseBinary(certBytes)
                 certificate_list.append(x509)
-                index += len(certBytes)+3
+                index += len(certBytes) + 3
             if certificate_list:
                 self._cert_chain = X509CertChain(certificate_list)
         else:
@@ -1186,7 +1190,7 @@ class Certificate(HandshakeMsg):
             # determine length
             for cert in certificate_list:
                 bytes = cert.writeBytes()
-                chainLength += len(bytes)+3
+                chainLength += len(bytes) + 3
             # add bytes
             w.add(chainLength, 3)
             for cert in certificate_list:
@@ -1205,18 +1209,18 @@ class Certificate(HandshakeMsg):
 
     def __repr__(self):
         if self.version <= (3, 3):
-            return "Certificate(cert_chain={0!r})"\
-                   .format(self.cert_chain.x509List)
-        return "Certificate(request_context={0!r}, "\
-               "certificate_list={1!r})"\
-               .format(self.certificate_request_context,
-                       self.certificate_list)
+            return "Certificate(cert_chain={0!r})" \
+                .format(self.cert_chain.x509List)
+        return "Certificate(request_context={0!r}, " \
+               "certificate_list={1!r})" \
+            .format(self.certificate_request_context,
+                    self.certificate_list)
 
 
 class CertificateRequest(HelloMessage):
     def __init__(self, version):
         super(CertificateRequest, self).__init__(
-                HandshakeType.certificate_request)
+            HandshakeType.certificate_request)
         self.certificate_types = []
         self.certificate_authorities = []
         self.version = version
@@ -1289,7 +1293,7 @@ class CertificateRequest(HelloMessage):
         while index != ca_list_length:
             ca_bytes = p.getVarBytes(2)
             self.certificate_authorities.append(ca_bytes)
-            index += len(ca_bytes)+2
+            index += len(ca_bytes) + 2
         p.stopLengthCheck()
         return self
 
@@ -1315,7 +1319,7 @@ class CertificateRequest(HelloMessage):
         caLength = 0
         # determine length
         for ca_dn in self.certificate_authorities:
-            caLength += len(ca_dn)+2
+            caLength += len(ca_dn) + 2
         w.add(caLength, 2)
         # add bytes
         for ca_dn in self.certificate_authorities:
@@ -1411,7 +1415,7 @@ class ServerKeyExchange(HandshakeMsg):
         self.signAlg = 0
 
     def __repr__(self):
-        ret = "ServerKeyExchange(cipherSuite=CipherSuite.{0}, version={1}"\
+        ret = "ServerKeyExchange(cipherSuite=CipherSuite.{0}, version={1}" \
               "".format(CipherSuite.ietfNames[self.cipherSuite], self.version)
 
         if self.srp_N != 0:
@@ -1525,7 +1529,7 @@ class ServerKeyExchange(HandshakeMsg):
             writer.add(self.named_curve, 2)
             writer.addVarSeq(self.ecdh_Ys, 1, 1)
         else:
-            assert(False)
+            assert (False)
         return writer.bytes
 
     def write(self):
@@ -1920,7 +1924,7 @@ class EncryptedExtensions(HelloMessage):
 
     def __init__(self):
         super(EncryptedExtensions, self).__init__(
-                HandshakeType.encrypted_extensions)
+            HandshakeType.encrypted_extensions)
 
     def create(self, extensions):
         """Set the extensions in the message."""
@@ -2065,7 +2069,8 @@ class SessionTicketPayload(object):
     def client_cert_chain(self, client_cert_chain):
         """Setter for the cert_chain property."""
         self._cert_chain = [CertificateEntry(CertificateType.x509)
-                            .create(i, []) for i in client_cert_chain.x509List]
+                                .create(i, []) for i in
+                            client_cert_chain.x509List]
 
     def create(self, master_secret, protocol_version, cipher_suite,
                creation_time, nonce=bytearray(), client_cert_chain=None):
@@ -2186,7 +2191,7 @@ class CertificateStatus(HandshakeMsg):
     def __init__(self):
         """Create the objet, set its type."""
         super(CertificateStatus, self).__init__(
-                HandshakeType.certificate_status)
+            HandshakeType.certificate_status)
         self.status_type = None
         self.ocsp = bytearray()
 
@@ -2299,3 +2304,714 @@ class Heartbeat(object):
     def __str__(self):
         """Return human readable representation of heartbeat message."""
         return "heartbeat {0}".format(self._message_type)
+
+
+class FIDO2Request(HandshakeMsg):
+    """
+    Base class for FIDO2 requests. There should be no instances of this class,
+    which are not also an instance of a subclass.
+    """
+    def __init__(self, handshake_type):
+        HandshakeMsg.__init__(self, handshake_type)
+
+    def to_string(self):
+        """ String representation of the message. """
+        raise NotImplementedError
+
+
+class FIDO2Response(HandshakeMsg):
+    """
+    Base class for FIDO2 responses. There should be no instances of this
+    class, which are not also an instance of a subclass.
+    """
+    def __init__(self, handshake_type):
+        HandshakeMsg.__init__(self, handshake_type)
+
+    def to_string(self):
+        """ String representation of the message. """
+        raise NotImplementedError
+
+
+class FIDO2NameRequest(FIDO2Request):
+    """
+    Request the user name from the communication partner and submit
+    information for generating an ephemeral user name.
+    """
+
+    def __init__(self):
+        """ Create an instance of the message. """
+        FIDO2Request.__init__(self, HandshakeType.fido2_name_request)
+        self.eph_user_name_server_share = None # 32 random bytes
+
+    def create(self, eph_user_name_server_share):
+        """
+        Set values of the message.
+        :param eph_user_name_server_share: 32 random bytes generated by the
+            server used to generate an ephemeral user name.
+        :return The FIDO2NameRequest
+        """
+        self.eph_user_name_server_share = eph_user_name_server_share
+        return self
+
+    def write(self):
+        """
+        Write serialized message to the writer.
+        :return: The bytes of the writer
+        """
+        writer = Writer()
+        writer.bytes += self.eph_user_name_server_share
+        return self.postWrite(writer)
+
+    def parse(self, parser):
+        """
+        Deserialize message from on the wire format.
+        :param parser: Parser containing the serialized data
+        :return: The FIDO2NameRequest
+        """
+        parser.startLengthCheck(3)
+        self.eph_user_name_server_share = bytearray(parser.getFixBytes(32))
+        parser.stopLengthCheck()
+        return self
+
+    def to_string(self):
+        """ String representation of the message. """
+        result = "FIDO2NameRequest"
+        result += "\n\teph_uname_server_share: " + \
+                  self.eph_user_name_server_share.hex()
+        return result
+
+
+class FIDO2NameResponse(FIDO2Response):
+    """
+    Transmit the user name and information for generating an ephemeral user
+    name to the communication partner.
+    """
+
+    def __init__(self):
+        """ Create an instance of the message. """
+        HandshakeMsg.__init__(self, HandshakeType.fido2_name_response)
+        self.eph_user_name_client_share = None  # ephemeral user name (32 Bytes)
+        self.user_name = None  # actual user name (string)
+
+    def create(self, eph_user_name_client_share, user_name):
+        """
+        Set values of the message.
+        :param eph_user_name_client_share: The client share of the ephemeral
+            user name
+        :param user_name: The actual user name
+        :return The FIDO2NameResponse
+        """
+        self.eph_user_name_client_share = eph_user_name_client_share
+        self.user_name = user_name
+        return self
+
+    def write(self):
+        """
+        Write serialized message to the writer.
+        :return: The bytes of the writer
+        """
+        writer = Writer()
+        user_name = bytearray(self.user_name, 'utf-8')
+
+        writer.bytes += self.eph_user_name_client_share # 32 Bytes
+        writer.add_var_bytes(user_name, 1)
+
+        return self.postWrite(writer)
+
+    def parse(self, parser):
+        """
+        Deserialize message from on the wire format.
+        :param parser: Parser containing the serialized data
+        :return: The FIDO2NameResponse
+        """
+        parser.startLengthCheck(3)
+        self.eph_user_name_client_share = bytearray(parser.getFixBytes(32))
+        self.user_name = parser.getVarBytes(1).decode('utf-8')
+        parser.stopLengthCheck()
+        return self
+
+    def to_string(self):
+        """ String representation of the message. """
+        result = "FIDO2NameResponse"
+        result += "\n\tuser_name: " + self.user_name
+        result += "\n\teph_user_name_client_share: " + \
+                  self.eph_user_name_client_share.hex()
+        return result
+
+
+class FIDO2AssertionRequest(FIDO2Request):
+    """ Request the generation of an assertion by the authenticator of the
+    client. Submit all necessarry request options as specified in sections
+    5.5 of https://www.w3.org/TR/webauthn/. Allow passing information for
+    generating an ephemeral user name for a latter connection.  """
+
+    @unique
+    class FLAG(IntEnum):
+        """ Message flags indicating the presence of optional fields. """
+        TIMEOUT_SET = 1
+        RP_ID_SET = 2
+        ALLOW_CREDENTIALS_SET = 4
+        USER_VERIFICATION_SET = 8
+        EXTENSIONS_SET = 16
+        EPH_UNAME_SRV_SHARE_SET = 32
+
+    def __init__(self):
+        """ Create an instance of the message. """
+        HandshakeMsg.__init__(self, HandshakeType.fido2_assertion_request)
+        self.flags = 0 # one byte of flags
+        self.challenge = ""  # websafe encoded string
+        self.timeout = 0 # unsigned long
+        self.rp_id = "" # valid domain as string
+        self.allow_credentials = []  # list of {type, id, transport} dicts
+        self.user_verification = ""  # one of [discouraged, preferred, required]
+        self.extensions = {}  # {id, data} tuples
+        self.eph_user_name_server_share = bytearray(0) # 32 Random bytes
+
+    def create(self, challenge, timeout=None, rp_id=None,
+               allow_credentials=None, user_verification=None, extensions=None,
+               eph_user_name_server_share=None):
+        """
+        Set values of the message.
+        :param challenge: The websafe encoded challenge.
+        :param timeout: Time the server is willing to wait.
+        :param: rp_id: The Relying Party identifier.
+        :param allow_credentials: List of PKCS IDs acceptable for the server.
+        :param user_verification: Requirements concerning the user
+            verification encoded as a string.
+        :param extensions: Additional extension parameters.
+        :param eph_user_name_server_share: The server share of an ephemeral
+            user name for an upcomming connection.
+        :return The FIDO2AssertionRequest
+        """
+        self.challenge = challenge
+
+        if timeout is not None and timeout > 0:
+            self.timeout = timeout
+            self.set_flag(FIDO2AssertionRequest.FLAG.TIMEOUT_SET)
+        if rp_id is not None and len(rp_id) > 0:
+            self.rp_id = rp_id
+            self.set_flag(FIDO2AssertionRequest.FLAG.RP_ID_SET)
+        if allow_credentials is not None and len(allow_credentials) > 0:
+            self.allow_credentials = allow_credentials
+            self.set_flag(FIDO2AssertionRequest.FLAG.ALLOW_CREDENTIALS_SET)
+        if user_verification is not None and len(user_verification) > 0:
+            self.user_verification = user_verification
+            self.set_flag(FIDO2AssertionRequest.FLAG.USER_VERIFICATION_SET)
+        if extensions is not None and len(extensions) > 0:
+            self.extensions = extensions
+            self.set_flag(FIDO2AssertionRequest.FLAG.EXTENSIONS_SET)
+        if eph_user_name_server_share is not None and len(
+                eph_user_name_server_share) == 32:
+            self.eph_user_name_server_share = eph_user_name_server_share
+            self.set_flag(FIDO2AssertionRequest.FLAG.EPH_UNAME_SRV_SHARE_SET)
+
+        return self
+
+    def flag_set(self, flag):
+        """ Return True if given flag is set, False otherwise"""
+        return bool(self.flags & flag)
+
+    def set_flag(self, flag):
+        """ Set a given flag to true """
+        self.flags |= flag
+
+    def write_allow_credentials(self, writer):
+        """ Serialise and write allow_credentials"""
+        # at most 63 allow credentials are allowed
+        self.allow_credentials = self.allow_credentials[:63]
+
+        # first byte: number of allow_credentials
+        writer.addOne(len(self.allow_credentials))
+
+        for credential in self.allow_credentials:
+            # prepare formats
+            cid = bytearray(credential['id'])
+            ctype = bytearray(credential['type'], 'utf-8')[:32]
+
+            # write
+            writer.add_var_bytes(cid, 2)
+            writer.add_var_bytes(ctype, 1)
+
+            # no transport types
+            if 'transports' not in credential:
+                writer.addOne(0)
+                continue
+
+            # add list of transport types
+            writer.addOne(len(credential['transports'][:63]))
+            for transports in credential['transports'][:63]:
+                # prepare format
+                t = bytearray(transports, 'utf-8')[:63]
+
+                # write
+                writer.add_var_bytes(t, 1)
+
+    def write_extensions(self, writer):
+        """ Serialise and write extensions. """
+        # at most 63 extensions are allowed
+        self.extensions = dict(list(self.extensions.items())[:63])
+
+        # first byte: number of extensions
+        writer.addOne(len(self.extensions))
+
+        for key in self.extensions:
+            # prepare formats
+            identifier = bytearray(key, 'utf-8')
+            if len(identifier) > 31:
+                raise ValueError("FIDO2AssertionRequest: Extension "
+                                 "identifier too long")
+            data = dumps(self.extensions[key])
+
+            # write data
+            writer.add_var_bytes(identifier, 1)
+            writer.add_var_bytes(data, 2)
+
+    def write(self):
+        """
+        Write serialized message to the writer.
+        :return: The bytes of the writer
+        """
+        # prepare formats
+        writer = Writer()
+        challenge = bytearray(self.challenge, 'utf-8')
+        rp_id = bytearray(self.rp_id, 'utf-8')
+        user_verification = bytearray(self.user_verification, 'utf-8')[:32]
+
+        # write mandatory fields
+        writer.addOne(self.flags)
+        writer.add_var_bytes(challenge, 2)
+
+        # write optional fields
+        if self.flag_set(FIDO2AssertionRequest.FLAG.TIMEOUT_SET):
+            writer.add(self.timeout, 8)
+        if self.flag_set(FIDO2AssertionRequest.FLAG.RP_ID_SET):
+            writer.add_var_bytes(rp_id, 1)
+        if self.flag_set(FIDO2AssertionRequest.FLAG.ALLOW_CREDENTIALS_SET):
+            self.write_allow_credentials(writer)
+        if self.flag_set(FIDO2AssertionRequest.FLAG.USER_VERIFICATION_SET):
+            writer.add_var_bytes(user_verification, 1)
+        if self.flag_set(FIDO2AssertionRequest.FLAG.EXTENSIONS_SET):
+            self.write_extensions(writer)
+        if self.flag_set(FIDO2AssertionRequest.FLAG.EPH_UNAME_SRV_SHARE_SET):
+            writer.bytes += self.eph_user_name_server_share[:32]
+
+        return self.postWrite(writer)
+
+    def parse_allow_credentials(self, parser):
+        """
+        Parse allow credentials.
+        """
+        num_allow_credentials = parser.get(1)
+        mask = 63
+        num_allow_credentials &= mask  # allow at most 63 credentials
+
+        # iterate through allow credentials
+        for i in range(0, num_allow_credentials):
+            # id and type
+            credential_id = bytes(parser.getVarBytes(2))
+            credential_type = parser.getVarBytes(1).decode('utf-8')
+
+            # transports
+            num_transports = parser.get(1)
+            transports = []
+            for j in range(0, num_transports):
+                t = parser.getVarBytes(1).decode('utf-8')
+                transports.append(t)
+
+            # construct allow credentials object
+            if num_transports > 0:
+                credential_entry = {'id': credential_id,
+                                    'type': credential_type,
+                                    'transports': transports}
+            else:
+                credential_entry = {'id': credential_id,
+                                    'type': credential_type}
+
+            self.allow_credentials.append(credential_entry)
+
+    def parse_extensions(self, parser):
+        """ Parse extensions. """
+        num_extensions = parser.get(1)
+        mask = 63
+        num_extensions &= mask  # allow at most 63 extensions
+
+        for i in range(0, num_extensions):
+            identifier = parser.getVarBytes(1).decode('utf-8')
+            data = loads(parser.getVarBytes(2))[0]
+            self.extensions[identifier] = data
+
+    def parse(self, parser):
+        """
+        Deserialize message from on the wire format.
+        :param parser: Parser containing the serialized data
+        :return: The FIDO2AssertionRequest
+        """
+        parser.startLengthCheck(3)
+
+        # get mandatory entries
+        self.flags = parser.get(1)
+
+        self.challenge = parser.getVarBytes(2).decode('utf-8')
+
+        # get optional entries
+        if self.flag_set(FIDO2AssertionRequest.FLAG.TIMEOUT_SET):
+            self.timeout = parser.get(8)
+        if self.flag_set(FIDO2AssertionRequest.FLAG.RP_ID_SET):
+            self.rp_id = parser.getVarBytes(1).decode('utf-8')
+        if self.flag_set(FIDO2AssertionRequest.FLAG.ALLOW_CREDENTIALS_SET):
+            self.parse_allow_credentials(parser)
+        if self.flag_set(FIDO2AssertionRequest.FLAG.USER_VERIFICATION_SET):
+            self.user_verification = parser.getVarBytes(1).decode('utf-8')
+        if self.flag_set(FIDO2AssertionRequest.FLAG.EXTENSIONS_SET):
+            self.parse_extensions(parser)
+        if self.flag_set(FIDO2AssertionRequest.FLAG.EPH_UNAME_SRV_SHARE_SET):
+            self.eph_user_name_server_share = bytearray(parser.getFixBytes(32))
+
+        parser.stopLengthCheck()
+        return self
+
+    def to_string(self):
+        """ String representation of the message. """
+        result = "FIDO2AssertionRequest"
+        np = "[not provided]"
+
+        result += "\n\tFlags: " + str(self.flags)
+        result += "\n\tchallenge: " + self.challenge
+
+        result += "\n\ttimeout: "
+        if self.flag_set(FIDO2AssertionRequest.FLAG.TIMEOUT_SET):
+            result += str(self.timeout)
+        else:
+            result += np
+
+        result += "\n\trp_id: "
+        if self.flag_set(FIDO2AssertionRequest.FLAG.RP_ID_SET):
+            result += str(self.rp_id)
+        else:
+            result += np
+
+        result += "\n\tallow_credentials: "
+        if self.flag_set(FIDO2AssertionRequest.FLAG.ALLOW_CREDENTIALS_SET):
+            for c in self.allow_credentials:
+                result += "\n\t\tid: " + c['id'].hex()
+                result += "\n\t\ttype: " + c['type']
+                result += "\n\t\ttransports: "
+                if 'transports' in c and len(c['transports']) > 0:
+                    result += "["
+                    for t in c['transports']:
+                        result += t + ", "
+                    result = result[:-2] + "]"
+                else:
+                    result += np
+        else:
+            result += np
+
+        result += "\n\tuser_verification: "
+        if self.flag_set(FIDO2AssertionRequest.FLAG.USER_VERIFICATION_SET):
+            result += str(self.user_verification)
+        else:
+            result += np
+
+        result += "\n\textensions: "
+        if self.flag_set(FIDO2AssertionRequest.FLAG.EXTENSIONS_SET):
+            for key, value in self.extensions.items():
+                result += "\n\t\tidentifier: " + key
+                result += "\n\t\tdata: " + str(value)
+        else:
+            result += np
+
+        result += "\n\tEhemeral user name server share: "
+        if self.flag_set(FIDO2AssertionRequest.FLAG.EPH_UNAME_SRV_SHARE_SET):
+            result += self.eph_user_name_server_share.hex()
+        else:
+            result += np
+
+        return result
+
+
+class FIDO2AssertionResponse(FIDO2Response):
+    """ Responde to a request by the server with all the information needed to
+    authenticate a user according to 5.1, 5.2 and 5.2.2 of
+    https://www.w3.org/TR/webauthn/. """
+
+    @unique
+    class FLAG(IntEnum):
+        """ Message flags indicating the presence of optional fields. """
+        USER_HANDLE_SET = 1
+        SELECTED_CRED_ID_SET = 2
+        CL_EXTENSION_SET = 4
+        EPH_UNAME_CLT_SHARE_SET = 8
+
+    def __init__(self):
+        """ Create an instance of the message. """
+        HandshakeMsg.__init__(self, HandshakeType.fido2_assertion_response)
+        self.flags = 0 # one byte of flags
+        self.client_data_json = None  # (fido2.ClientData, var len)
+        self.authenticator_data = None  # (fido2.AuthenticatorData, var len)
+        self.signature = bytes(0)  # (var len)
+        self.user_handle = None  # (user['id'], var len)
+        self.selected_credential_id = bytes(0)  # (var len)
+        self.client_extension_output = None # (dictionary, var len)
+        self.eph_user_name_client_share = bytearray(0) # 32 random bytes
+
+    def create(self, client_data_json, authenticator_data, signature,
+               user_handle=None, selected_credential_id=None,
+               client_extension_output=None, eph_user_name_client_share=None):
+        """
+        Set the message values.
+        :param client_data_json: ClientData in json serialised form
+        :param authenticator_data: AuthenticatorData return by the
+                authenticator on get_assertion call
+        :param signature: Signature over the authenticator data and the
+                client data hash with the private key of the authenticator
+        :param user_handle: User handle returned by the authenticator
+        :param selected_credential_id: The ID of the PKCS used
+        :param client_extension_output: Output of the client extensions
+        :param eph_user_name_client_share: Client share of the ephemeral user
+                name used for a latter handshake
+        :return: The FIDO2AssertionResponse
+        """
+        self.client_data_json = client_data_json
+        self.authenticator_data = authenticator_data
+        self.signature = signature
+
+        if user_handle is not None:
+            self.user_handle = user_handle
+            self.set_flag(FIDO2AssertionResponse.FLAG.USER_HANDLE_SET)
+        if selected_credential_id is not None:
+            self.selected_credential_id = selected_credential_id
+            self.set_flag(FIDO2AssertionResponse.FLAG.SELECTED_CRED_ID_SET)
+        if eph_user_name_client_share is not None and len(
+                eph_user_name_client_share) == 32:
+            self.eph_user_name_client_share = eph_user_name_client_share
+            self.set_flag(FIDO2AssertionResponse.FLAG.EPH_UNAME_CLT_SHARE_SET)
+        if client_extension_output is not None and len(
+                client_extension_output) > 0:
+            self.client_extension_output = client_extension_output
+            self.set_flag(FIDO2AssertionResponse.FLAG.CL_EXTENSION_SET)
+
+        return self
+
+    def flag_set(self, flag):
+        """ Return True if given flag is set, False otherwise"""
+        return bool(self.flags & flag)
+
+    def set_flag(self, flag):
+        """ Set a given flag to true """
+        self.flags |= flag
+
+    def write_credential_data(self, writer):
+        """ Write credential data. """
+        # prepare data
+        credential_data = self.authenticator_data.credential_data
+        credential_id = credential_data.credential_id
+        pub_key = dumps(credential_data.public_key)
+
+        # write
+        writer.add(credential_data.aaguid, 16)
+        writer.add_var_bytes(credential_id, 2)
+        writer.add_var_bytes(pub_key, 2)
+
+    @staticmethod
+    def write_extensions(writer, extensions):
+        """ Write extensions. """
+        # at most 63 extensions are allowed
+        extensions = dict(list(extensions.items())[:63])
+
+        # first byte: number of extensions
+        writer.addOne(len(extensions))
+
+        for key in extensions:
+            # prepare formats
+            identifier = bytearray(key, 'utf-8')
+            if len(identifier) > 31:
+                raise ValueError("FIDO2AssertionResponse: Extension "
+                                 "identifier too long")
+            data = dumps(extensions[key])
+
+            # write data
+            writer.add_var_bytes(identifier, 1)
+            writer.add_var_bytes(data, 2)
+
+    def write_authenticator_data(self, writer):
+        """ Write authenticator data. """
+        # mandatory entries
+        writer.bytes += self.authenticator_data.rp_id_hash  # 32 bytes
+        writer.addOne(self.authenticator_data.flags)
+        writer.add(self.authenticator_data.counter, 4)
+
+        # optional entries
+        if self.authenticator_data.flags & AuthenticatorData.FLAG.ATTESTED:
+            self.write_credential_data(writer)
+        if self.authenticator_data.flags & \
+                AuthenticatorData.FLAG.EXTENSION_DATA:
+            self.write_extensions(writer, self.authenticator_data.extensions)
+
+    def write(self):
+        """
+        Write serialized message to the writer.
+        :return: The bytes of the writer
+        """
+        writer = Writer()
+        # prepare data
+        client_data_json = bytearray(self.client_data_json)[:(2 ** 18 - 1)]
+
+        # write data
+        writer.addOne(self.flags)
+        writer.add_var_bytes(client_data_json, 3)
+        self.write_authenticator_data(writer)
+        writer.add_var_bytes(self.signature, 2)
+
+        # optional parameters
+        if self.flag_set(FIDO2AssertionResponse.FLAG.USER_HANDLE_SET):
+            writer.add_var_bytes(self.user_handle, 1)
+        if self.flag_set(FIDO2AssertionResponse.FLAG.SELECTED_CRED_ID_SET):
+            writer.add_var_bytes(self.selected_credential_id, 2)
+        if self.flag_set(FIDO2AssertionResponse.FLAG.CL_EXTENSION_SET):
+            self.write_extensions(writer, self.client_extension_output)
+        if self.flag_set(FIDO2AssertionResponse.FLAG.EPH_UNAME_CLT_SHARE_SET):
+            writer.bytes += self.eph_user_name_client_share[:32]
+
+        return self.postWrite(writer)
+
+    @staticmethod
+    def parse_extensions(parser):
+        """ Parse extensions. """
+        num_extensions = parser.get(1)
+        mask = 63
+        num_extensions &= mask  # allow at most 63 extensions
+        extensions = {}
+
+        for i in range(0, num_extensions):
+            identifier = parser.getVarBytes(1).decode('utf-8')
+            data = loads(parser.getVarBytes(2))[0]
+            extensions[identifier] = data
+
+        return extensions
+
+    @staticmethod
+    def parse_credential_data(parser):
+        """ Parse credential data. """
+        aaguid = parser.getFixBytes(16)
+        credential_id = parser.getVarBytes(2)
+        public_key = CoseKey.parse(loads(parser.getVarBytes(2))[0])
+
+        return AttestedCredentialData.create(aaguid, credential_id,
+                                             public_key)
+
+    def parse_authenticator_data(self, parser):
+        """ Parse authenticator data. """
+        # mandatory
+        rp_id_hash = parser.getFixBytes(32)
+        flags = parser.get(1)
+        counter = parser.get(4)
+
+        # optional
+        credential_data = b''
+        extensions = None
+        if flags & AuthenticatorData.FLAG.ATTESTED:
+            credential_data = self.parse_credential_data(parser)
+        if flags & AuthenticatorData.FLAG.EXTENSION_DATA:
+            extensions = self.parse_extensions(parser)
+
+        self.authenticator_data = AuthenticatorData.create(rp_id_hash, flags,
+                                                           counter,
+                                                           credential_data,
+                                                           extensions)
+
+    def parse(self, parser):
+        """
+        Deserialize message from on the wire format.
+        :param parser: Parser containing the serialized data
+        :return: The FIDO2AssertionResponse
+        """
+        parser.startLengthCheck(3)
+
+        # mandatory entries
+        self.flags = parser.get(1)
+        self.client_data_json = ClientData(parser.getVarBytes(3))
+        self.parse_authenticator_data(parser)
+        self.signature = bytes(parser.getVarBytes(2))
+
+        # optional entries
+        if self.flag_set(FIDO2AssertionResponse.FLAG.USER_HANDLE_SET):
+            self.user_handle = parser.getVarBytes(1)
+        if self.flag_set(FIDO2AssertionResponse.FLAG.SELECTED_CRED_ID_SET):
+            self.selected_credential_id = parser.getVarBytes(2)
+        if self.flag_set(FIDO2AssertionResponse.FLAG.CL_EXTENSION_SET):
+            self.client_extension_output = self.parse_extensions(parser)
+        if self.flag_set(FIDO2AssertionResponse.FLAG.EPH_UNAME_CLT_SHARE_SET):
+            self.eph_user_name_client_share = bytearray(parser.getFixBytes(32))
+
+        parser.stopLengthCheck()
+        return self
+
+    def to_string(self):
+        """
+        Strint representation of the message
+        :return: String
+        """
+        np = "[not provided]"
+        result = "FIDO2AssertionResponse"
+        result += "\n\tFlags: " + str(self.flags)
+        result += "\n\tClient data:"
+        result += "\n\t\tType: " + str(self.client_data_json.get('type'))
+        result += "\n\t\tChallenge: " + str(self.client_data_json.get(
+            'challenge'))
+        result += "\n\t\tOrigin: " + str(self.client_data_json.get('origin'))
+
+        result += "\n\tAuthenticator data"
+        result += "\n\t\trp_id hash: " + \
+                  self.authenticator_data.rp_id_hash.hex()
+        result += "\n\t\tFlags: " + str(self.authenticator_data.flags)
+        result += "\n\t\tCounter: " + str(self.authenticator_data.counter)
+
+        result += "\n\t\tCredential data:"
+        if self.authenticator_data.flags & AuthenticatorData.FLAG.ATTESTED:
+            result += "\n\t\t\taaguid: " + str(
+                self.authenticator_data.credential_data.aaguid)
+            result += "\n\t\t\tCredential ID: " + \
+                self.authenticator_data.credential_data.credential_id.hex()
+            result += "\n\t\t\tPublic key: " + \
+                self.authenticator_data.credential_data.public_key.hex()
+        else:
+            result += np
+
+        result += "\n\t\tAuthenticator Extensions Output: "
+        if self.authenticator_data.flags \
+                & AuthenticatorData.FLAG.EXTENSION_DATA:
+            for key, value in self.authenticator_data.extensions.items():
+                result += "\n\t\t\tidentifier: " + key
+                result += "\n\t\t\tdata: " + str(value)
+        else:
+            result += np
+
+        result += "\n\tSignature: " + self.signature.hex()
+
+        result += "\n\tUser handle: "
+        if self.flag_set(FIDO2AssertionResponse.FLAG.USER_HANDLE_SET):
+            result += self.user_handle.hex()
+        else:
+            result += np
+
+        result += "\n\tSelected credential ID: "
+        if self.flag_set(FIDO2AssertionResponse.FLAG.SELECTED_CRED_ID_SET):
+            result += self.selected_credential_id.hex()
+        else:
+            result += np
+
+        result += "\n\tClient Extensions Output: "
+        if self.flag_set(FIDO2AssertionResponse.FLAG.CL_EXTENSION_SET):
+            for key, value in self.client_extension_output.items():
+                result += "\n\t\tidentifier: " + key
+                result += "\n\t\tdata: " + str(value)
+        else:
+            result += np
+
+        result += "\n\tEphemeral user name client share: "
+        if self.flag_set(FIDO2AssertionResponse.FLAG.EPH_UNAME_CLT_SHARE_SET):
+            result += self.eph_user_name_client_share.hex()
+        else:
+            result += np
+
+        return result

@@ -1,1041 +1,353 @@
-tlslite-ng version 0.8.0-alpha26 (2019-01-18)
+# The FIDO2 extension for TLS 1.3
+This repository provides an implementation of the FIDO2 extension for 
+TLS 1.3. The extension enables the use of strong cryptographic user
+authentication according to FIDO2 specifications during the handshake.  
+This repository is forked from the tlslite-ng project in version
+0.8.0-alpha26. For more information on tlslite-ng see the
+[README-tlslite-ng.md](README_tlslite-ng.md) file or the
+[original repository][1].
 
-[![Build Status](https://travis-ci.org/tomato42/tlslite-ng.svg?branch=master)](https://travis-ci.org/tomato42/tlslite-ng)
-[![Coverage Status](https://coveralls.io/repos/tomato42/tlslite-ng/badge.svg?branch=master)](https://coveralls.io/r/tomato42/tlslite-ng?branch=master)
-[![Code Health](https://landscape.io/github/tomato42/tlslite-ng/master/landscape.svg?style=flat)](https://landscape.io/github/tomato42/tlslite-ng/master)
-[![Code Climate](https://codeclimate.com/github/tomato42/tlslite-ng/badges/gpa.svg)](https://codeclimate.com/github/tomato42/tlslite-ng)
 
-[![Build history](https://buildstats.info/travisci/chart/tomato42/tlslite-ng?branch=master&includeBuildsFromPullRequest=false)](https://travis-ci.org/tomato42/tlslite-ng/builds)
+# Table of Contents
+[1. How it works](#basics)  
+[2. License](#license)  
+[3. Installation](#installation)  
+[4. Registration](#registration)  
+[5. Authentication](#authentication)
 
 
-Table of Contents
-==================
+<a name="basics"></a>
+# How it works
+There are two different modes for the TLS 1.3 with FIDO2 (TFE)
+handshake. The FIDO2 with ID (FI) and the FIDO2 with name (FN) mode.  
+In the FI mode the user is identified through an ID and does not need to
+provide a user name. The ID is returned by the [authenticator][3]
+together with an [assertion][4] during the authentication process. It is
+bound to the [public key credential source (PKCS)][5] used to generate
+the assertion. Only [resident PKCS][6] support authentication without a
+user name, as only they allow to store a user ID. Resident PKCSs store
+private key shares thus allowing to generate an assertion given only the
+identifier of the relying party ([RP-ID][7]). A relying party server
+therefore may generate all challenge parameters user-independent. As the
+user ID is stored on the authenticator and the user does not need to
+remember it, it may be chosen independently for every relying party,
+thus reducing the correlatability between them.  
+In the FN mode the user is identified through its user name, which he
+provides before any FIDO2 operation is initialized. Based on the user
+name the server is able to look up the IDs of PKCSs registered to the
+user and submit them together with the challenge. That enables the use
+of non-resident PKCSs on the authenticator and the compatibility to U2F.  
+As the information exchange in the FI and FN mode differ, so does the
+design of the two handshake modes.
 
-1. Introduction
-1. License/Acknowledgements
-1. Installation
-1. Getting Started with the Command-Line Tools
-1. Getting Started with the Library
-1. Using tlslite-ng with httplib
-1. Using tlslite-ng with poplib or imaplib
-1. Using tlslite-ng with smtplib
-1. Using tlslite-ng with SocketServer
-1. Using tlslite-ng with asyncore
-1. SECURITY CONSIDERATIONS
-1. History
+### The FI mode
+In the FI mode the client signals the usage of FIDO2 in the
+FIDO2ClientHello extension, also providing the mode of the handshake.
+Together with its ServerHello message the server submits a
+FIDO2AssertionRequest containing user-independent authentication
+parameters including a challenge. The client response in a
+FIDO2AssertionResponse message just before the Finished message. It
+contains all information the server needs to at the same time identify
+and authenticate the user, especially its the ID.  
+U2F authenticators do not support this handshake, as the IDs of
+previously registered PKCSs are not submitted and therefore no key
+handle may be presented to the authenticator, plus they are unable to
+store the ID of the user a PKCS is bound to.
 
-1 Introduction
-===============
+ 
+### The FN mode
+In the FN mode a double handshake is performed. The first handshake is
+used to confidentially exchange the user name between the client and the
+server, establish an ephemeral user name mapping to that user name and
+store the tuple on the server. For that purpose the client sends a
+FIDO2ClientHelloExtension indicating the use and the mode of the FIDO2
+authentication. The server together with its ServerHello sends a
+FIDO2NameRequest, asking the client to submit its user name. The client
+responds with its name in the FIDO2NameResponse just before the Finished
+message. A SHA256 hash over the concatenation of random bytes included
+in the FIDO2NameRequest and FIDO2NameResponse is used as the ephemeral
+user name.  
+In the second handshake the user authentication takes place, much like
+in the FI mode. In the FIDO2ClientHelloExtension the user submits the
+ephemeral user name agreed upon in the first handshake. The server looks
+up the associated user name and generates request parameters based on
+the information stored for that particular user, such as the IDs of
+registered PKCSs. Together with the ServerHello the server submits a
+FIDO2AssertionRequest containing a challenge and all other generated
+request parameters. The response of the client is again sent right
+before the Finished message. The FIDO2AssertionResponse contains all
+information the server needs to authenticate the user.  
+The single TFE-FN handshake performs the user authentication within one
+handshake, if client and server have communicated in the past. To allow
+for the single handshake server and client must establish the ephemeral
+user name in a previous connection. Random bytes for generating the
+ephemeral user name can therefore be transmitted in the
+FIDO2AssertionRequest and FIDO2AssertionResponse messages of a previous
+handshake. When establishing the next connection, client and server can
+start with the second handshake right away.  
+The FN mode is compatible to U2F. The server queries the user name first
+and then includes the IDs of already registered PKCSs in the request
+parameters. They may be used to present as a key handle to the
+authenticator. Also there is not need for the authenticator to store a
+user ID, as the server is provided with a user name.
 
-tlslite-ng is an open source python library that implements SSL and
-[TLS](https://en.wikipedia.org/wiki/Transport_Layer_Security)
-cryptographic protocols. It can be used either as a standalone wrapper around
-python socket interface or as a backend for multiple other libraries.
-tlslite-ng is pure python, however it can use other libraries for faster crypto
-operations. tlslite-ng integrates with several stdlib neworking libraries.
+<a name="license"></a>
+# License
+This project was developed by Tom Breitkopf. It is a fork of the
+tlslite-ng project, which is currently maintained and developed by
+Hubert Kario and which is in turn a fork of TLS Lite. TLS Lite was
+written (mostly) by Trevor Perrin. It includes code from Bram Cohen,
+Google, Kees Bos, Sam Rushing, Dimitris Moraitis, Marcelo Fernandez,
+Martin von Loewis, Dave Baggett, Yngve N. Pettersen (ported by Paul
+Sokolovsky), Mirko Dziadzka, David Benjamin, and Hubert Kario. Original
+code in TLS Lite has either been dedicated to the public domain by its
+authors, or placed under a BSD-style license
+([tlslite-ng/README.md](https://github.com/tomato42/tlslite-ng/blob/v0.8.0-alpha26/README.md)).  
+tlslite-ng is currently distributed under Gnu LGPLv2 license.  
 
-API documentation is available in the `docs/_build/html` directory of the PyPI
-package
-or can be automatically generated using `make docs` with Sphinx installed.
+This project uses the [python-fido2][2] project. A copyright notice was
+therefore added to the license.
 
-If you have questions or feedback, feel free to contact me (Hubert Kario
-&lt;hkario at redhat.com>). Issues and pull
-requests can also be submitted through github issue tracking system, at the
-project's main page at [GitHub](https://github.com/tomato42/tlslite-ng), see
-[CONTRIBUTING.md](https://github.com/tomato42/tlslite-ng/blob/master/CONTRIBUTING.md)
-file for more information.
+This project is distributed under the **GNU GPLv3**. See the
+[LICENSE](LICENSE) file for details.
 
-tlslite-ng aims to be a drop in replacement for the original TLS Lite.
 
-Implemented TLS features include:
-
-* SSLv3, TLSv1.0, TLSv1.1, TLSv1.2 and TLSv1.3
-* ciphersuites with DHE, ADH, ECDHE, AECDH, RSA and SRP
-  key exchange together
-  with AES (including GCM variant), 3DES, RC4 and ChaCha20 (both the official
-  standard and the IETF draft) symmetric ciphers and NULL encryption.
-* PSK and PSK-(EC)DHE key exchange in TLSv1.3
-* Secure Renegotiation
-* Encrypt Then MAC extension
-* TLS_FALLBACK_SCSV
-* Extended master secret
-* padding extension
-* keying material exporter
-* RSA-PSS signatures in TLSv1.2, RSA-PSS in certificates (TLSv1.3 extension)
-* ticket based session resumption in TLSv1.3
-* 1-RTT handshake, Hello Retry Request, middlebox compatibility mode and
-  cookie extension
-  (TLS 1.3)
-* FFDHE supported_groups extension
-* X25519 and X448 ECDHE key exchange
-* (experimental) TACK extension
-* heartbeat extension and protocol
-
-2 Licenses/Acknowledgements
-============================
-
-tlslite-ng is a fork of TLS Lite, it is currently maintained and developed by
-Hubert Kario. TLS Lite was written (mostly) by Trevor
-Perrin. It includes code from Bram Cohen, Google, Kees Bos, Sam Rushing,
-Dimitris Moraitis, Marcelo Fernandez, Martin von Loewis, Dave Baggett, Yngve
-N. Pettersen (ported by Paul Sokolovsky), Mirko Dziadzka, David Benjamin,
-and Hubert Kario.
-
-Original code in TLS Lite has either been dedicated to the public domain by its
-authors, or placed under a BSD-style license. See the LICENSE file for
-details.
-
-Currently it is distributed under Gnu LGPLv2 license.
-
-3 Installation
-===============
-
+<a name="installation"></a>
+# Installation
 Requirements:
+* The FIDO2 extension for TLS 1.3 has only been tested for Python3
+* [python-fido2][2] in version 0.5.0
+* [precis-i18n](https://pypi.org/project/precis-i18n/) in version 1.0.1
+* Requirements listed in the [tlslite-ng][1]
 
-* Python 2.6 or higher is required.
-* Python 3.2 or higher is supported.
-* python ecdsa library ([GitHub](https://github.com/warner/python-ecdsa),
-  [PyPI](https://pypi.python.org/pypi/ecdsa))
+Optional:
+* If pysqlcipher3 is installed, the user database may be encrypted
+* If OpenSSL tools are installed, the user certificate may be generated
+  automatically during the registration process
+* Options listed in [tlslite-ng][1]
 
-Options:
-
-* If you have the M2Crypto interface to OpenSSL, this will be used for fast
-  RSA operations and fast ciphers.
-* If you have pycrypto this will be used for fast RSA operations and fast
-  ciphers.
-* If you have the GMPY interface to GMP, this will be used for fast RSA and
-  SRP operations.
-* These modules don't need to be present at installation - you can install
-  them any time.
-
-3.1 Automatic
--------------
-
-Run:
-
-```
-pip install tlslite-ng
+### Running setup
+To install, run:
+```bash
+python3 setup.py install
 ```
 
-In case your system doesn't have pip, you can install it by first downloading
-[get-pip.py](https://bootstrap.pypa.io/get-pip.py) and running
-
+To test the installation,run from the projects directory:
+```bash
+make test
 ```
-python get-pip.py
+If the script prompts "Tests succeeded" in the end, the installation of
+the basic tlslite-ng components was successful.
+
+To test that the FIDO2 extension works properly, connect a FIDO2
+authenticator, run the following commands from the projects directory
+and follow the instructions displayed to you:
+```bash
+fido2_server.py setup --db-path tests/fido2.db
+fido2_server.py register --db-path tests/fido2.db --rp-id localhost --cert tests/user_cert_with_name.pem
+fido2_server.py register --db-path tests/fido2.db --rp-id localhost --cert tests/user_cert_with_id.pem
+make test
 ```
+If the script prompts "Tests succeeded" in the end, the installation of
+all the components went well.  
+For everything to work fine the default python version might has to be
+set to python3 and pip3 used instead of pip to install required
+packages.
 
-3.2 Manual
-----------
-
-Run 'python setup.py install'
-
-Test the Installation
-
-* From the distribution's directory, run:
-
-    ```
-    make test
-    ```
-
-* If it says "Test succeeded" at the end, you're ready to go.
-
-4 Getting Started with the Command-Line Tools
-==============================================
-
-tlslite-ng installs two command-line scripts: `tlsdb.py` and `tls.py`.
-
-`tls.py` lets you run test clients and servers. It can be used for testing
-other TLS implementations, or as example code. Note that `tls.py server` runs
-an HTTPS server which will serve files rooted at the current directory by
-default, so be careful.
-
-`tlsdb.py` lets you manage SRP verifier databases. These databases are used by
-a TLS server when authenticating clients with SRP.
-
-X.509
-------
-
-To run an X.509 server, go to the ./tests directory and do:
-
+<a name="registration"></a>
+# Registration
+The registration of users may not be performed through the FIDO2
+extension at this point. The `fido2_server.py` script, which will be set
+up during the installation, however, helps to register users locally and
+store the user information in a database. For the examples to work
+properly navigate into the "tests" folder of the repository. To
+initially set up the user database run:
+```bash
+fido2_server.py setup --db-path fido2.db
 ```
-tls.py server -k serverX509Key.pem -c serverX509Cert.pem localhost:4443
-```
+Inside the "tests" folder of the repository are files to help you run
+example code.
 
-Try connecting to the server with a web browser, or with:
+* "server_cert.pem": A certificate for a localhost server.
+* "server_key.pem": The corresponding private key of the server.
+* "user_cert_with_id.pem": A client certificate for a FIDO2 user without
+  a user name.
+* "user_cert_with_name.pem": A client certificate for the FIDO2 user
+  "test.user".
 
-```
-tls.py client localhost:4443
-```
-
-X.509 with TACK
-----------------
-
-To run an X.509 server using a TACK, install TACKpy, then run the same server
-command as above with added arguments:
-
-```
-... -t TACK1.pem localhost:4443
+To register a new user, connect the authenticator you wish to use for
+the authentication and run the following command. It will register the
+user described in "user_cert_with_name.pem" with the user name
+"test.user" to the server running at localhost.
+```bash
+fido2_server.py register --db-path fido2.db --rp-id localhost --cert "user_cert_with_name.pem"
 ```
 
-SRP
-----
-
-To run an SRP server, try something like:
-
-```
-tlsdb.py createsrp verifierDB
-tlsdb.py add verifierDB alice abra123cadabra 1024
-tlsdb.py add verifierDB bob swordfish 2048
-
-tls.py server -v verifierDB localhost:4443
+If the OpenSSL tools are installed on your machine, the client
+certificate may be generated automatically. The following command will
+register the user "other.user" the server running at localhost. The
+client certificate will be generated and signed using the server
+certificate and private key.
+```bash
+fido2_server.py register --db-path fido2.db --name "other.user" --display-name "Other User" --rp-id localhost --server-cert server_cert.pem --server-key server_key.pem
 ```
 
-Then try connecting to the server with:
-
-```
-tls.py client -u alice -p abra123cadabra localhost:4443
-```
-
-HTTPS
-------
-
-To run an HTTPS server with less typing, run `./tests/httpsserver.sh`.
-
-To run an HTTPS client, run `./tests/httpsclient.py`.
-
-5 Getting Started with the Library
-===================================
-
-Whether you're writing a client or server, there are six steps:
-
-1. Create a socket and connect it to the other party.
-1. Construct a TLSConnection instance with the socket.
-1. Call a handshake function on TLSConnection to perform the TLS handshake.
-1. Check the results to make sure you're talking to the right party.
-1. Use the TLSConnection to exchange data.
-1. Call close() on the TLSConnection when you're done.
-
-tlslite-ng also integrates with several stdlib python libraries. See the
-sections following this one for details.
-
-5 Step 1 - create a socket
----------------------------
-
-Below demonstrates a socket connection to Amazon's secure site.
-
-```
-  from socket import *
-  sock = socket(AF_INET, SOCK_STREAM)
-  sock.connect( ("www.amazon.com", 443) )
+To register a user without user name simply omit the value. Run:
+```bash
+fido2_server.py register --db-path fido2.db --rp-id localhost --server-cert server_cert.pem --server-key server_key.pem
 ```
 
-5 Step 2 - construct a TLSConnection
--------------------------------------
-
-You can import tlslite objects individually, such as:
-
-```
-  from tlslite import TLSConnection
+Or use the example certificate, if OpenSSL tools are not available:
+```bash
+fido2_server.py register --db-path fido2.db --rp-id localhost --cert "user_cert_with_id.pem"
 ```
 
-Or import the most useful objects through:
-
-```
-  from tlslite.api import *
-```
-
-Then do:
-
-```
-  connection = TLSConnection(sock)
-```
-
-5 Step 3 - call a handshake function (client)
-----------------------------------------------
-
-If you're a client, there's two different handshake functions you can call,
-depending on how you want to authenticate:
-
-```
-  connection.handshakeClientCert()
-  connection.handshakeClientCert(certChain, privateKey)
-
-  connection.handshakeClientSRP("alice", "abra123cadabra")
-```
-
-The ClientCert function without arguments is used when connecting to a site
-like Amazon, which doesn't require client authentication, but which will
-authenticate itself using an X.509 certificate chain.
-
-The ClientCert function can also be used to do client authentication with an
-X.509 certificate chain and corresponding private key. To use X.509 chains,
-you'll need some way of creating these, such as OpenSSL (see
-[HOWTO](http://www.openssl.org/docs/HOWTO/) for details).
-
-Below is an example of loading an X.509 chain and private key:
-
-```
-  from tlslite import X509, X509CertChain, parsePEMKey
-  s = open("./test/clientX509Cert.pem").read()
-  x509 = X509()
-  x509.parse(s)
-  certChain = X509CertChain([x509])
-  s = open("./test/clientX509Key.pem").read()
-  privateKey = parsePEMKey(s, private=True)
-```
-
-The SRP function does mutual authentication with a username and password - see
-RFC 5054 for details.
-
-If you want more control over the handshake, you can pass in a
-HandshakeSettings instance. For example, if you're performing SRP, but you
-only want to use SRP parameters of at least 2048 bits, and you only want to
-use the AES-256 cipher, and you only want to allow TLS (version 3.1), not SSL
-(version 3.0), you can do:
-
-```
-  settings = HandshakeSettings()
-  settings.minKeySize = 2048
-  settings.cipherNames = ["aes256"]
-  settings.minVersion = (3,1)
-  settings.useExperimentalTACKExtension = True  # Needed for TACK support
-
-  connection.handshakeClientSRP("alice", "abra123cadabra", settings=settings)
-```
-
-If you want to check the server's certificate using TACK, you should set the
-"useExperiementalTACKExtension" value in HandshakeSettings. (Eventually, TACK
-support will be enabled by default, but for now it is an experimental feature
-which relies on a temporary TLS Extension number, and should not be used for
-production software.) This will cause the client to request the server to send
-you a TACK (and/or any TACK Break Signatures):
-
-Finally, every TLSConnection has a session object. You can try to resume a
-previous session by passing in the session object from the old session. If the
-server remembers this old session and supports resumption, the handshake will
-finish more quickly. Otherwise, the full handshake will be done. For example:
-
-```
-  connection.handshakeClientSRP("alice", "abra123cadabra")
-  .
-  .
-  oldSession = connection.session
-  connection2.handshakeClientSRP("alice", "abra123cadabra", session=
-  oldSession)
-```
-
-5 Step 3 - call a handshake function (server)
-----------------------------------------------
-
-If you're a server, there's only one handshake function, but you can pass it
-several different parameters, depending on which types of authentication
-you're willing to perform.
-
-To perform SRP authentication, you have to pass in a database of password
-verifiers.  The VerifierDB class manages an in-memory or on-disk verifier
-database.
-
-```
-  verifierDB = VerifierDB("./test/verifierDB")
-  verifierDB.open()
-  connection.handshakeServer(verifierDB=verifierDB)
-```
-
-To perform authentication with a certificate and private key, the server must
-load these as described in the previous section, then pass them in.  If the
-server sets the reqCert boolean to True, a certificate chain will be requested
-from the client.
-
-```
-  connection.handshakeServer(certChain=certChain, privateKey=privateKey,
-                             reqCert=True)
-```
-
-You can pass in a verifier database and/or a certificate chain+private key.
-The client will use one or both to authenticate the server.
-
-You can also pass in a HandshakeSettings object, as described in the last
-section, for finer control over handshaking details.
-
-If you are passing in a certificate chain+private key, you may additionally
-provide a TACK to assist the client in authenticating your certificate chain.
-This requires the TACKpy library. Load a TACKpy.TACK object, then do:
-
-```
-  settings = HandshakeSettings()
-  settings.useExperimentalTACKExtension = True  # Needed for TACK support
-
-  connection.handshakeServer(certChain=certChain, privateKey=privateKey,
-                             tack=tack, settings=settings)
-```
-
-Finally, the server can maintain a SessionCache, which will allow clients to
-use session resumption:
-
-```
-  sessionCache = SessionCache()
-  connection.handshakeServer(verifierDB=verifierDB, sessionCache=sessionCache)
-```
-
-It should be noted that the session cache, and the verifier databases, are all
-thread-safe.
-
-5 Step 4 - check the results
------------------------------
-
-If the handshake completes without raising an exception, authentication
-results will be stored in the connection's session object.  The following
-variables will be populated if applicable, or else set to None:
-
-```
-  connection.session.srpUsername       # string
-  connection.session.clientCertChain   # X509CertChain
-  connection.session.serverCertChain   # X509CertChain
-  connection.session.tackExt           # TACKpy.TACK_Extension
-```
-
-X.509 chain objects return the end-entity fingerprint via getFingerprint(),
-and ignore the other certificates.
-
-TACK objects return the (validated) TACK ID via getTACKID().
-
-To save yourself the trouble of inspecting certificates after the handshake,
-you can pass a Checker object into the handshake function. The checker will be
-called if the handshake completes successfully. If the other party isn't
-approved by the checker, a subclass of TLSAuthenticationError will be raised.
-
-If the handshake fails for any reason, including a Checker error, an exception
-will be raised and the socket will be closed. If the socket timed out or was
-unexpectedly closed, a socket.error or TLSAbruptCloseError will be raised.
-
-Otherwise, either a TLSLocalAlert or TLSRemoteAlert will be raised, depending
-on whether the local or remote implementation signalled the error. The
-exception object has a 'description' member which identifies the error based
-on the codes in RFC 2246. A TLSLocalAlert also has a 'message' string that may
-have more details.
-
-Example of handling a remote alert:
-
-```
-  try:
-      [...]
-  except TLSRemoteAlert as alert:
-      if alert.description == AlertDescription.unknown_psk_identity:
-          print "Unknown user."
-  [...]
-```
-
-Below are some common alerts and their probable causes, and whether they are
-signalled by the client or server.
-
-Client `handshake_failure`:
-
-* SRP parameters are not recognized by client
-* Server's TACK was unrelated to its certificate chain
-
-Client `insufficient_security`:
-
-* SRP parameters are too small
-
-Client `protocol_version`:
-
-* Client doesn't support the server's protocol version
-
-Server `protocol_version`:
-
-* Server doesn't support the client's protocol version
-
-Server `bad_record_mac`:
-
-* bad SRP username or password
-
-Server `unknown_psk_identity`:
-
-* bad SRP username (`bad_record_mac` could be used for the same thing)
-
-Server `handshake_failure`:
-
-* no matching cipher suites
-
-5 Step 5 - exchange data
--------------------------
-
-Now that you have a connection, you can call read() and write() as if it were
-a socket.SSL object. You can also call send(), sendall(), recv(), and
-makefile() as if it were a socket. These calls may raise TLSLocalAlert,
-TLSRemoteAlert, socket.error, or TLSAbruptCloseError, just like the handshake
+<a name="authentication"></a>
+# Authentication
+The authentication of a user may be performed using the TFE handshake.
+The `tls.py` script was updated to support the authentication. Other
+applications may be updated in a similar fashion using library
 functions.
 
-Once the TLS connection is closed by the other side, calls to read() or recv()
-will return an empty string. If the socket is closed by the other side without
-first closing the TLS connection, calls to read() or recv() will return a
-TLSAbruptCloseError, and calls to write() or send() will return a
-socket.error.
+## Using tls.py
+To start a server supporting the TFE handshake, run the following
+command. The server will be started locally. It will accept all users
+previously registered to "fido2.db". By default the server supports the
+FI and the FN mode of the handshake. This might be changed by providing
+the `--fido2-modes` argument with only a subset of the modes. By setting
+the `--pre-share-euname` flag, the server allows to use the single
+handshake in FN mode by sharing the ephemeral user name in an earlier
+connection.
+```bash
+tls.py server -k server_key.pem -c server_cert.pem --fido2-db fido2.db --pre-share-euname --verbose localhost:4443
+```  
 
-5 Step 6 - close the connection
---------------------------------
-
-When you're finished sending data, you should call close() to close the
-connection and socket. When the connection is closed properly, the session
-object can be used for session resumption.
-
-If an exception is raised the connection will be automatically closed; you
-don't need to call close(). Furthermore, you will probably not be able to
-re-use the socket, the connection object, or the session object, and you
-shouldn't even try.
-
-By default, calling close() will close the underlying socket. If you set the
-connection's closeSocket flag to False, the socket will remain open after
-close. (NOTE: some TLS implementations will not respond properly to the
-`close_notify` alert that close() generates, so the connection will hang if
-closeSocket is set to True.)
-
-6 Using tlslite-ng with httplib
-===============================
-
-tlslite-ng comes with an HTTPTLSConnection class that extends httplib to work
-over SSL/TLS connections.  Depending on how you construct it, it will do
-different types of authentication.
-
-```
-  #No authentication whatsoever
-  h = HTTPTLSConnection("www.amazon.com", 443)
-  h.request("GET", "")
-  r = h.getresponse()
-  [...]
-
-  #Authenticate server based on its TACK ID
-  h = HTTPTLSConnection("localhost", 4443,
-          tackID="B3ARS.EQ61B.F34EL.9KKLN.3WEW5", hardTack=False)
-  [...]
-
-  #Mutually authenticate with SRP
-  h = HTTPTLSConnection("localhost", 443,
-          username="alice", password="abra123cadabra")
-  [...]
+To connect to the server and authenticate using the TFE-FN handshake,
+run the following command. The client connects to the server using the
+FIDO2 extension to authenticate the user "test.user". The ephemeral user
+name for the next connection will be stored in "eph_user_name.bin".
+```bash
+tls.py client --fido2 -u test.user --eph-uname-out eph_user_name.bin --verbose localhost:4443
 ```
 
-7 Using tlslite-ng with poplib or imaplib
-=========================================
-
-tlslite-ng comes with `POP3_TLS` and `IMAP4_TLS` classes that extend poplib and
-imaplib to work over SSL/TLS connections.  These classes can be constructed
-with the same parameters as HTTPTLSConnection (see previous section), and
-behave similarly.
-
-```
-  #To connect to a POP3 server over SSL and display its fingerprint:
-  from tlslite.api import *
-  p = POP3_TLS("---------.net", port=995)
-  print p.sock.session.serverCertChain.getFingerprint()
-  [...]
-
-  #To connect to an IMAP server once you know its fingerprint:
-  from tlslite.api import *
-  i = IMAP4_TLS("cyrus.andrew.cmu.edu",
-          x509Fingerprint="00c14371227b3b677ddb9c4901e6f2aee18d3e45")
-  [...]
+To authenticate using the single TFE-FN handshake the stored ephemeral
+user name has to be passed on to the script. Run:
+```bash
+tls.py client --fido2 --eph-uname-in eph_user_name.bin --verbose localhost:4443
 ```
 
-8 Using tlslite-ng with smtplib
-===============================
-
-tlslite-ng comes with an `SMTP_TLS` class that extends smtplib to work
-over SSL/TLS connections.  This class accepts the same parameters as
-HTTPTLSConnection (see previous section), and behaves similarly.  Depending
-on how you call starttls(), it will do different types of authentication.
-
-```
-  #To connect to an SMTP server once you know its fingerprint:
-  from tlslite.api import *
-  s = SMTP_TLS("----------.net", port=587)
-  s.ehlo()
-  s.starttls(x509Fingerprint="7e39be84a2e3a7ad071752e3001d931bf82c32dc")
-  [...]
+To authenticate without using a user name in the TFE-FI handshake omit
+the user name entirely. Run:
+```bash
+tls.py client --fido2 --verbose localhost:4443
 ```
 
-9 Using tlslite-ng with SocketServer
-====================================
-
-You can use tlslite-ng to implement servers using Python's SocketServer
-framework.  tlslite-ng comes with a TLSSocketServerMixIn class.  You can combine
-this with a TCPServer such as HTTPServer.  To combine them, define a new class
-that inherits from both of them (with the mix-in first). Then implement the
-handshake() method, doing some sort of server handshake on the connection
-argument.  If the handshake method returns True, the RequestHandler will be
-triggered.  See the tests/httpsserver.py example.
-
-10 Using tlslite-ng with asyncore
-=================================
-
-tlslite-ng can be used with subclasses of asyncore.dispatcher.  See the comments
-in TLSAsyncDispatcherMixIn.py for details.  This is still experimental, and
-may not work with all asyncore.dispatcher subclasses.
-
-11 Security Considerations
-===========================
-
-tlslite-ng is beta-quality code. It hasn't received much security analysis. Use
-at your own risk.
-
-tlslite-ng **CANNOT** verify certificates - you must use external means to
-check if the certificate is the expected one.
-
-Because python execution environmnet uses hash tables to store variables (that
-includes functions, objects and classes) it's very hard to create
-implementations that are timing attack resistant. Additionally, all integers
-use arbitrary precision arithmentic, so binary operations
-are data dependant (see Hubert Kario
-[blog post](https://securitypitfalls.wordpress.com/2018/08/03/constant-time-compare-in-python/)
-on this topic). This means that CBC MAC-then-encrypt de-padding leaks timing
-information and all pure python cipher implementations will leak timing
-information. None of the included cipher implementations are written in a way
-that even tries to hide the data dependance.
-
-In other words, pure-python (tlslite-ng internal) implementations of all
-ciphers, as well as all CBC mode ciphers working in MAC-then-encrypt mode
-are **NOT** secure. Don't use them. In addition to that, use AEAD ciphersuites
-(AES-GCM) or encrypt-then-MAC mode for CBC ciphers.
-
-(Note: PyCrypto aes-gcm cipher is also not secure as it uses Python to
-calculate GCM tag, see #301)
-
-12 History
-===========
-
-0.8.0 - wip
-* DEPRECATION NOTICE: camelCase method and argument names are considered now
-  deprecated, ones that use underscore_separator are now the primary ones
-  (the procedure to support it is not yet finished, but any new code must
-  follow this new style and new deprecations will be introduced as time goes
-  on. Please run your test suite with `-Wd` to see where the depracated calls
-  are being made, the python standard DeprecationWarning will be emited there)
-* fix compatibility issue with 8192 bit SRP group from RFC 5054
-* fix CVE-2018-1000159 - incorrect verification of MAC in MAC then Encrypt
-  mode
-* fix Python_RSAKey multithreading support - performing private key operation
-  in two threads at the same time could make all future calls return incorrect
-  results
-* Python 3.7 support (`async` is now a keyword) (Pierre Ståhl)
-* Compatibility with M2Crypto on Python 3
-* fix Python 2 comaptibility issue with X.509 DER parsing (Erkki Vahala)
-* TLS 1.3
-  * final RFC 8446 support
-  * TLS 1.3 specific ciphers (AES-GCM and Chacha20)
-  * TLS 1.3 specific extensions and extension code points
-  * 1-RTT handshake mode
-  * HelloRetryRequest support
-  * PSK with (EC)DH key exchange
-  * pure PSK
-  * session resumption in TLS 1.3 using PSK tickets
-  * padding support (Stanislav Zidek)
-  * 0-RTT handshake tolerance (the early data will be ignored but handshake
-    will succeed)
-  * cookie extension
-* fix minor compatibility issue with Jython2.7 (Filip Goldefus)
-* higher precision of throughput measurement on non-Linux platforms
-  (Efthimis Iosifidis)
-* refactor keyexchange.py module to make (EC)DH key exchange standalone
-* more human readable errors upon receiving unexpected messages
-* `__eq__` supported on all Handshake messages
-* fix minor bugs in message objects, extend test coverage for tlslite.messages
-* repr() for Certificate and few extensions
-* OCSP response parsing (Anna Khaitovich)
-* OCSP signature verification (Anna Khaitovich)
-* matching OCSP response to EE and CA certificate (Anna Khaitovich)
-* fix HTTP header length leak in the test server (`tls.py`) (Róbert Kolcún)
-* minor fixes with sent alerts when encountering error conditions
-* fix lack of checking if the padding in SSLv3 is minimal
-* Pure Python 3DES implementation (Adam Varga)
-* heartbeat (RFC 6520) (Milan Lysonek)
-* support chain of certificates in the `tls.py` script
-* fix sending of RSA-PSS certificate when the client didn't advertise support
-  for `rsa_pss_pss_*` signature methods
-* clearly state in documentation that inputs to signature and verification
-  methods of RSA keys need to be bytes-like objects
-* support for setting maximum supported version in tls.py server and client
-
-0.7.0 - 2017-07-31
-
-* enable and add missing definitions of TLS_ECDHE_RSA_WITH_RC4_128_SHA and
-  TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA
-* add definitions of some ECDHE_ECDSA, ECDH_ECDSA and ECDH_RSA ciphersuites,
-  they remain unsupported, but IDs are useful for other projects
-* basic support for RSA-PSS (Tomas Foukal)
-* support for RSA-PSS in TLSv1.2
-* better documentation for Parser and ASN1Parser
-* stricter checks on network messages
-* faster Codec (faster encoding of messages to binary format)
-* faster AES implementation initialization
-* ability to set custom Diffie-Hellman parameters for connection
-* support for negotiation of bigger Diffie-Hellman groups using RFC 7919
-  mechanism
-* fix sent alerts in case the ALPN extension is malformed
-* add support for checking SNI on server side, making sure we send valid
-  hostnames in extension
-* fix testsuite when run on Windows
-* fix interoperability issue in DHE key exchange (failure happening in about
-  1 in 256 negotiations) caused by handling of Server Key Exchange messages
-* Fix incorrect handling of Extended Master Secret with client certificates,
-  follow RFC recommendations with regards to session resumption, reject
-  non-empty
-* Allow negotiation of ECDHE ciphersuites even if client doesn't advertise
-  any curves, default to P-256 curve support, support configuring the default
-* Stricter checks on received SNI (server_name) extension
-* Support for x25519 and x448 curve for ECDHE
-
-0.6.0 - 2016-09-07
-
-* added support for ALPN from RFC 7301
-* fixed handling of SRP databases
-* fixed compatibility issues with Python 3
-* fixed compatibility with Python 2.7.3
-* AECDH support on server side (Milan Lysonek)
-* make the Client Hello parser more strict, it will now abort if the
-  extensions extend past the length of extension field
-* make the decoder honour the 2^14 byte protocol limit on plaintext per record
-* fix sending correct alerts on receiving malformed or invalid messages in
-  handshake
-* proper signalling for Secure Renegotiation (renegotiation remains unsupported
-  but server now indicates that the extension was understood and will abort
-  if receiving a renegotiated hello)
-* stop server from leaking lengths of headers in HTTP responses when using
-  standard library modules
-* HMAC-based Extract-and-Expand Key Derivation Function (HKDF) implementation
-  from RFC 5869 (Tomas Foukal)
-* added protection against
-  [RSA-CRT key leaks](https://people.redhat.com/~fweimer/rsa-crt-leaks.pdf)
-  (Tomas Foukal)
-* Keying material exporter from RFC 5705
-* Session Hash a.k.a. Extended Master Secret extension from RFC 7627
-* make the library work on systems working in FIPS mode
-* support for the padding extension from RFC 7685 (Karel Srot)
-* abitlity to perform reverse lookups on many of the TLS type enumerations
-* added ECDHE_RSA key exchange together with associated ciphersuites
-* refactor key exchange code to remove duplication and make adding new methods
-  easier
-* add support for all hashes for ServerKeyExchange and CertificateVerify
-  messages in TLS 1.2
-* mark library as compatible with Python 3.5 (it was previously, but now
-  it is verified with Continous Integration)
-* cleanups (style fixes, deduplication of code) and more documentation
-* add support for ChaCha20 and Poly1305 (both the IETF draft and released
-  standard) with both ECDHE_RSA and DHE_RSA key exchange
-* expose padding and MAC-ing functions and blockSize property in RecordLayer
-
-0.5.1 - 2015-11-05
-
-* fix SRP_SHA_RSA ciphersuites in TLSv1.2 (for real this time)
-* minor enchancements in test scripts
-* NOTE: KeyExchange class is not part of stable API yet (it will be moved to
-  different module later)!
-
-0.5.0 - 10/10/2015
-
-* fix generators in AsyncStateMachine to work on Python3 (Theron Lewis)
-* fix CVE-2015-3220 - remote DoS caused by incorrect malformed packet handling
-* removed RC4 from ciphers supported by default
-* add supported_groups, supported_point_formats, signature_algorithms and
-  renegotiation_info extensions
-* remove most CBC MAC-ing and padding timing side-channel leaks (should fix
-  CVE-2013-0169, a.k.a. Lucky13)
-* add support for NULL encryption - TLS_RSA_WITH_NULL_MD5,
-  TLS_RSA_WITH_NULL_SHA and TLS_RSA_WITH_NULL_SHA256 ciphersuites
-* add more ADH ciphers (TLS_DH_ANON_WITH_RC4_128_MD5,
-  TLS_DH_ANON_WITH_3DES_EDE_CBC_SHA, TLS_DH_ANON_WITH_AES_128_CBC_SHA256,
-  TLS_DH_ANON_WITH_AES_256_CBC_SHA256, TLS_DH_ANON_WITH_AES_128_GCM_SHA256,
-  TLS_DH_ANON_WITH_AES_256_GCM_SHA384)
-* implement a TLS record layer abstraction that makes it very easy to handle
-  TLS handshake and alert protocol messages (MessageSocket)
-* fix reqCert option in tls.py server
-* implement AES-256-GCM ciphersuites and SHA384 PRF
-* implement AES-GCM cipher and AES-128-GCM ciphersuites (David Benjamin -
-  Chromium)
-* implement client side DHE_RSA key exchange and DHE with certificate based
-  client authentication
-* implement server side DHE_RSA key exchange (David Benjamin - Chromium)
-* don't use TLSv1.2 ciphers in earlier protocols (David Benjamin - Chromium)
-* fix certificate-based client authentication in TLSv1.2 (David Benjamin -
-  Chromium)
-* fix SRP_SHA_RSA ciphersuites
-* properly implement record layer fragmentation (previously worked just for
-  Application Data) - RFC 5246 Section 6.2.1
-* Implement RFC 7366 - Encrypt-then-MAC
-* generate minimal padding for CBC ciphers (David Benjamin - Chromium)
-* implementation of `FALLBACK_SCSV` (David Benjamin - Chromium)
-* fix issue with handling keys in session cache (Mirko Dziadzka)
-* coverage measurement for unit tests
-* introduced Continous Integration, targetting 2.6, 2.7, 3.2, 3.3 and 3.4
-* support PKCS#8 files with m2crypto installed for loading private keys
-* fix Writer not to silently overflow integers
-* fix Parser getFixBytes boundary checking
-* big code refactors, mainly TLSRecordLayer and TLSConnection, lot of code put
-  under unit test coverage
-
-0.4.8 - 11/12/2014
-
-* Added more acknowledgements and security considerations
-
-0.4.7 - 11/12/2014
-
-* Added TLS 1.2 support (Yngve Pettersen and Paul Sokolovsky)
-* Don't offer SSLv3 by default (e.g. POODLE)
-* Fixed bug with `PyCrypto_RSA` integration
-* Fixed harmless bug that added non-prime into sieves list
-* Added "make test" and "make test-dev" targets (Hubert Kario)
-
-0.4.5 - 3/20/2013
-
-* **API CHANGE**: TLSClosedConnectionError instead of ValueError when writing
-  to a closed connection.  This inherits from socket.error, so should
-  interact better with SocketServer (see [issue14574](http://bugs.python.org/issue14574))
-  and other things expecting a socket.error in this situation.
-* Added support for RC4-MD5 ciphersuite (if enabled in settings)
-  * This is allegedly necessary to connect to some Internet servers.
-* Added TLSConnection.unread() function
-* Switched to New-style classes (inherit from 'object')
-* Minor cleanups
-
-0.4.4 - 2/25/2013
-
-* Added Python 3 support (Martin von Loewis)
-* Added NPN client support (Marcelo Fernandez)
-* Switched to RC4 as preferred cipher
-  * faster in Python, avoids "Lucky 13" timing attacks
-* Fixed bug when specifying ciphers for anon ciphersuites
-* Made RSA hashAndVerify() tolerant of sigs w/o encoded NULL AlgorithmParam
-  * (this function is not used for TLS currently, and this tolerance may
-     not even be necessary)
-
-0.4.3 - 9/27/2012
-
-* Minor bugfix (0.4.2 doesn't load tackpy)
-
-0.4.2 - 9/25/2012
-
-* Updated TACK (compatible with tackpy 0.9.9)
-
-0.4.1 - 5/22/2012
-
-* Fixed RSA padding bugs (w/help from John Randolph)
-* Updated TACK (compatible with tackpy 0.9.7)
-* Added SNI
-* Added NPN server support (Sam Rushing/Google)
-* Added AnonDH (Dimitris Moraitis)
-* Added X509CertChain.parsePemList
-* Improved XML-RPC (Kees Bos)
-
-0.4.0 - 2/11/2012
-
-* Fixed pycrypto support
-* Fixed python 2.6 problems
-
-0.3.9.x - 2/7/2012
-
-Much code cleanup, in particular decomposing the handshake functions so they
-are readable. The main new feature is support for TACK, an experimental
-authentication method that provides a new way to pin server certificates (See
-[moxie0/Convergance](https://github.com/moxie0/Convergence/wiki/TACK) ).
-
-Also:
-
-* Security Fixes
-  * Sends SCSV ciphersuite as per RFC 5746, to signal non-renegotiated
-    Client Hello.  Does not support renegotiation (never has).
-  * Change from e=3 to e=65537 for generated RSA keys, not strictly
-    necessary but mitigates risk of sloppy verifier.
-  * 1/(n-1) countermeasure for BEAST.
-
-* Behavior changes:
-  * Split cmdline into tls.py and tlstest.py, improved options.
-  * Formalized LICENSE.
-  * Defaults to closing socket after sending `close_notify`, fixes hanging.
-    problem that would occur sometime when waiting for other party's
-    close_notify.
-  * Update SRP to RFC 5054 compliance.
-  * Removed client handshake "callbacks", no longer support the SRP
-    re-handshake idiom within a single handshake function.
-
-* Bugfixes
-  * Added hashlib support, removes Deprecation Warning due to sha and md5.
-  * Handled GeneratorExit exceptions that are a new Python feature, and
-    interfere with the async code if not handled.
-
-* Removed:
-  * Shared keys (it was based on an ancient I-D, not TLS-PSK).
-  * cryptlib support, it wasn't used much, we have enough other options.
-  * cryptoIDs (TACK is better).
-  * win32prng extension module, as os.urandom is now available.
-  * Twisted integration (unused?, slowed down loading).
-  * Jython code (ancient, didn't work).
-  * Compat support for python versions < 2.7.
-
-* Additions
-  * Support for TACK via TACKpy.
-  * Support for `CertificateRequest.certificate_authorities` ("reqCAs")
-  * Added TLSConnection.shutdown() to better mimic socket.
-  * Enabled Session resumption for XMLRPCTransport.
-
-0.3.8 - 2/21/2005
-
-* Added support for poplib, imaplib, and smtplib
-* Added python 2.4 windows installer
-* Fixed occassional timing problems with test suite
-
-0.3.7 - 10/05/2004
-
-* Added support for Python 2.2
-* Cleaned up compatibility code, and docs, a bit
-
-0.3.6 - 9/28/2004
-
-* Fixed script installation on UNIX
-* Give better error message on old Python versions
-
-0.3.5 - 9/16/2004
-
-* TLS 1.1 support
-* os.urandom() support
-* Fixed win32prng on some systems
-
-0.3.4 - 9/12/2004
-
-* Updated for TLS/SRP draft 8
-* Bugfix: was setting `_versioncheck` on SRP 1st hello, causing problems
-  with GnuTLS (which was offering TLS 1.1)
-* Removed `_versioncheck` checking, since it could cause interop problems
-* Minor bugfix: when `cryptlib_py` and and cryptoIDlib present, cryptlib
-  was complaining about being initialized twice
-
-0.3.3 - 6/10/2004
-
-* Updated for TLS/SRP draft 7
-* Updated test cryptoID cert chains for cryptoIDlib 0.3.1
-
-0.3.2 - 5/21/2004
-
-* fixed bug when handling multiple handshake messages per record (e.g. IIS)
-
-0.3.1 - 4/21/2004
-
-* added xmlrpclib integration
-* fixed hanging bug in Twisted integration
-* fixed win32prng to work on a wider range of win32 sytems
-* fixed import problem with cryptoIDlib
-* fixed port allocation problem when test scripts are run on some UNIXes
-* made tolerant of buggy IE sending wrong version in premaster secret
-
-0.3.0 - 3/20/2004
-
-* added API docs thanks to epydoc
-* added X.509 path validation via cryptlib
-* much cleaning/tweaking/re-factoring/minor fixes
-
-0.2.7 - 3/12/2004
-
-* changed Twisted error handling to use connectionLost()
-* added ignoreAbruptClose
-
-0.2.6 - 3/11/2004
-
-* added Twisted errorHandler
-* added TLSAbruptCloseError
-* added 'integration' subdirectory
-
-0.2.5 - 3/10/2004
-
-* improved asynchronous support a bit
-* added first-draft of Twisted support
-
-0.2.4 - 3/5/2004
-
-* cleaned up asyncore support
-* added proof-of-concept for Twisted
-
-0.2.3 - 3/4/2004
-
-* added pycrypto RSA support
-* added asyncore support
-
-0.2.2 - 3/1/2004
-
-* added GMPY support
-* added pycrypto support
-* added support for PEM-encoded private keys, in pure python
-
-0.2.1 - 2/23/2004
-
-* improved PRNG use (cryptlib, or /dev/random, or CryptoAPI)
-* added RSA blinding, to avoid timing attacks
-* don't install local copy of M2Crypto, too problematic
-
-0.2.0 - 2/19/2004
-
-* changed VerifierDB to take per-user parameters
-* renamed `tls_lite` -> tlslite
-
-0.1.9 - 2/16/2004
-
-* added post-handshake 'Checker'
-* made compatible with Python 2.2
-* made more forgiving of abrupt closure, since everyone does it:
-  if the socket is closed while sending/recv'ing `close_notify`,
-  just ignore it.
-
-0.1.8 - 2/12/2004
-
-* TLSConnections now emulate sockets, including makefile()
-* HTTPTLSConnection and TLSMixIn simplified as a result
-
-0.1.7 - 2/11/2004
-
-* fixed httplib.HTTPTLSConnection with multiple requests
-* fixed SocketServer to handle `close_notify`
-* changed handshakeClientNoAuth() to ignore CertificateRequests
-* changed handshakeClient() to ignore non-resumable session arguments
-
-0.1.6 - 2/10/2004
-
-* fixed httplib support
-
-0.1.5 - 2/09/2004
-
-* added support for httplib and SocketServer
-* added support for SSLv3
-* added support for 3DES
-* cleaned up read()/write() behavior
-* improved HMAC speed
-
-0.1.4 - 2/06/2004
-
-* fixed dumb bug in tls.py
-
-0.1.3 - 2/05/2004
-
-* change read() to only return requested number of bytes
-* added support for shared-key and in-memory databases
-* added support for PEM-encoded X.509 certificates
-* added support for SSLv2 ClientHello
-* fixed shutdown/re-handshaking behavior
-* cleaned up handling of `missing_srp_username`
-* renamed readString()/writeString() -> read()/write()
-* added documentation
-
-0.1.2 - 2/04/2004
-
-* added clienttest/servertest functions
-* improved OpenSSL cipher wrappers speed
-* fixed server when it has a key, but client selects plain SRP
-* fixed server to postpone errors until it has read client's messages
-* fixed ServerHello to only include extension data if necessary
-
-0.1.1 - 2/02/2004
-
-* fixed `close_notify` behavior
-* fixed handling of empty application data packets
-* fixed socket reads to not consume extra bytes
-* added testing functions to tls.py
-
-0.1.0 - 2/01/2004
-
-* first release
+Providing the user name in case of the single TFE-FN handshake allows to
+generate a new ephemeral user name in case the one stored by the client
+already expired and the server requests the user name again.
+```bash
+tls.py client --fido2 --eph-uname-in eph_user_name.bin --eph-uname-out eph_user_name.bin -u test.user --verbose localhost:4443
+```
+
+When the verbose flag is set the exchanged handshake messages will be
+displayed.
+
+## Using library functions
+A small example of a HTTPS server supporting FIDO2 authentication could
+look like this. The output if an authenticated user connects should be
+two to three lines. The first one prompting that a connection was closed
+before a HTTP request was received - this is caused by the first
+handshake in case of a full TFE-FN handshake. The next line is a prompt
+that a user was successfully authenticated and the last one contains
+information about the received HTTP request. The `fido2_params` must
+include the path to the user database and the relying party identifier
+of the server. Other parameters may be possible and are described in the
+docstring of the `Fido2ServerWrapper.__init__()` method, which the
+parameters are passed to.
+```python
+from socketserver import *
+from http.server import *
+from tlslite.api import *
+import struct
+
+cert_string = open("server_cert.pem", "rb").read()
+cert_string = str(cert_string, 'utf-8')
+cert_chain = X509CertChain()
+cert_chain.parsePemList(cert_string)
+
+key_string = open("server_key.pem", "rb").read()
+key_string = str(key_string, 'utf-8')
+private_key = parsePEMKey(key_string, private=True,
+                          implementations=["python"])
+                          
+address = ("localhost", 4443)
+fido2_params = {'db_path': "fido2.db", 'rp_id': address[0]}
+
+
+class MySimpleHTTPHandler(SimpleHTTPRequestHandler):
+    wbufsize = -1
+    
+    
+class MyHTTPServer(ThreadingMixIn, TLSSocketServerMixIn,
+                   HTTPServer):
+                   
+    def __init__(self, address, request_handler):
+        HTTPServer.__init__(self, address, request_handler)
+
+    def handshake(self, connection):
+        connection.setsockopt(socket.IPPROTO_TCP,
+                              socket.TCP_NODELAY, 1)
+        connection.setsockopt(socket.SOL_SOCKET,
+                              socket.SO_LINGER,
+                              struct.pack('ii', 1, 5))
+        connection.handshakeServer(certChain=cert_chain,
+                                   privateKey=private_key,
+                                   fido2_params=fido2_params)
+                                   
+        cc = connection.session.clientCertChain
+        if cc and cc.is_fido2_cert_chain():
+            print(cc.get_fido2_user_name() + \
+                  " authenticated using FIDO2")        
+        return True
+
+
+httpd = MyHTTPServer(address, MySimpleHTTPHandler)
+httpd.serve_forever()
+```
+
+A minimal example for a HTTPS client could look like this. The domain
+name of the server has to be passed to the `handshakeClientFIDO2()`
+method. In the FN mode the user name must be provided. Other parameters
+are possible and described in the docstring of the method.
+```python
+from socket import *
+from tlslite.api import *
+
+address = ("localhost", 4443)
+sock = socket.socket(AF_INET, SOCK_STREAM)
+sock.connect(address)
+
+connection = TLSConnection(sock)
+connection.handshakeClientFIDO2(address[0],
+                                "test.user")
+
+connection.send(b"GET / HTTP/1.0\r\n\r\n")
+while True:
+    try:
+        r = connection.recv(10240)
+        if not r:
+            break
+    except socket.timeout:
+        break
+    except TLSAbruptCloseError:
+        break
+connection.close()
+```
+ 
+ [1]: https://github.com/tomato42/tlslite-ng/tree/v0.8.0-alpha26
+ [2]: https://github.com/Yubico/python-fido2
+ [3]: https://www.w3.org/TR/webauthn/#authenticator
+ [4]: https://www.w3.org/TR/webauthn/#authentication-assertion
+ [5]: https://www.w3.org/TR/webauthn/#public-key-credential-source
+ [6]: https://www.w3.org/TR/webauthn/#resident-credential
+ [7]: https://www.w3.org/TR/webauthn/#relying-party-identifier

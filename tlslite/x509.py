@@ -1,6 +1,7 @@
 # Authors: 
 #   Trevor Perrin
 #   Google - parsing subject field
+#   Tom-Lukas Breitkopf - Allow getting common names subject and organization
 #
 # See the LICENSE file for legal information regarding use of this file.
 
@@ -148,4 +149,53 @@ class X509(object):
         """Serialise object to a DER encoded string."""
         return self.bytes
 
+    def _get_subject_info(self, field_identifier):
+        """
+        Get information about the subject based on the identifier
+        :param field_identifier: Identifier of the field
+        :return: String with information
+        """
+        try:
+            baseparser = ASN1Parser(self.subject)
 
+            for i in range(0, baseparser.getChildCount()):
+                the_set = baseparser.getChildBytes(i)
+                subparser = ASN1Parser(the_set)
+                the_sequence = subparser.getChildBytes(0)
+                subparser = ASN1Parser(the_sequence)
+                identifier = subparser.getChild(0)
+                value = subparser.getChild(1)
+                if identifier.value == field_identifier:
+                    return value.value.decode('utf-8')
+        except Exception:
+            return None
+
+        return None
+
+    def get_subject_common_name(self):
+        """
+        Get the common name of the subject of the certificate.
+        :return: The common name as a string
+        """
+        return self._get_subject_info(b'U\x04\x03')
+
+    def get_subject_state(self):
+        """
+        Get the state/province of the subject of the certificate
+        :return: The state/province as a sttring
+        """
+        return self._get_subject_info(b'U\x04\x08')
+
+    def get_subject_organization_name(self):
+        """
+        Get the organization name of the subject of the certificate.
+        :return: The organization name as a string
+        """
+        return self._get_subject_info(b'U\x04\n')
+
+    def get_subject_organization_unit(self):
+        """
+        Get the organization unit of the subject of the certificate
+        :return: The organization unit as a string
+        """
+        return self._get_subject_info(b'U\x04\x0b')

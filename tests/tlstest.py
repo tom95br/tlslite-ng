@@ -9,6 +9,7 @@
 #   Hubert Kario - several improvements
 #   Google - FALLBACK_SCSV test
 #   Efthimis Iosifidis - improvemnts of time measurement in Throughput Test
+#   Tom-Lukas Breitkopf - Tests for FIDO2 extension in TLS 1.3
 #
 #
 # See the LICENSE file for legal information regarding use of this file.
@@ -49,6 +50,10 @@ try:
     
 except ImportError:
     pass
+from fido2.hid import CtapHidDevice
+from tlslite.fido2clientwrapper import Fido2ClientWrapper, ClientState
+from threading import Event
+
 
 def printUsage(s=None):
     if m2cryptoLoaded:
@@ -116,6 +121,155 @@ def clientTestCmd(argv):
     connection.close()
 
     test_no += 1
+
+    if fido2_device:
+        print("Test {0} - FIDO2 FN: first handshake".format(test_no))
+        synchro.recv(1)
+        connection = connect()
+        settings = HandshakeSettings()
+        settings.versions = [(3, 4)]
+        settings.minVersion = (3, 4)
+        settings.use_fido2_extension = True
+        user_name = "test.user"
+        eph_user_name_file = os.path.join(dir, "eph_user_name.bin")
+        fido2_client = Fido2ClientWrapper(address[0], user_name,
+                                          eph_user_name_out=eph_user_name_file)
+        connection._handshakeClientFIDO2Helper(fido2_client=fido2_client,
+                                               settings=settings,
+                                               serverName=address[0])
+        testConnClient(connection)
+        assert (len(fido2_client.eph_user_name) > 0)
+        connection.close()
+
+        test_no += 1
+
+        print("Test {0} - FIDO2 FN: second handshake".format(test_no))
+        synchro.recv(1)
+        connection = connect()
+        settings = HandshakeSettings()
+        settings.versions = [(3, 4)]
+        settings.minVersion = (3, 4)
+        settings.use_fido2_extension = True
+        connection._handshakeClientFIDO2Helper(fido2_client=fido2_client,
+                                               settings=settings,
+                                               serverName=address[0])
+        testConnClient(connection)
+        connection.close()
+
+        test_no += 1
+
+        print("Test {0} - FIDO2 FN: single handshake".format(test_no))
+        synchro.recv(1)
+        connection = connect()
+        settings = HandshakeSettings()
+        settings.versions = [(3, 4)]
+        settings.minVersion = (3, 4)
+        settings.use_fido2_extension = True
+        fido2_client = Fido2ClientWrapper(address[0],
+                                          eph_user_name_in=eph_user_name_file,
+                                          eph_user_name_out=eph_user_name_file)
+        connection._handshakeClientFIDO2Helper(fido2_client=fido2_client,
+                                               settings=settings,
+                                               serverName=address[0])
+        testConnClient(connection)
+        connection.close()
+
+        test_no += 1
+
+
+        session = connection.session
+
+        # resume
+        print("Test {0} - resumption after FIDO2".format(test_no))
+        synchro.recv(1)
+        settings = HandshakeSettings()
+        settings.keyShares = []
+        connection = connect()
+        connection.handshakeClientCert(serverName=address[0], session=session,
+                                       settings=settings)
+        testConnClient(connection)
+        assert connection.resumed
+        connection.close()
+
+        test_no += 1
+
+        print("Test {0} - FIDO2 bad server request".format(test_no))
+        synchro.recv(1)
+        connection = connect()
+        settings = HandshakeSettings()
+        settings.versions = [(3, 4)]
+        settings.minVersion = (3, 4)
+        settings.use_fido2_extension = True
+        fido2_client = Fido2ClientWrapper(address[0], user_name,
+                                          eph_user_name_in=eph_user_name_file)
+        try:
+            connection._handshakeClientFIDO2Helper(fido2_client=fido2_client,
+                                                   settings=settings,
+                                                   serverName=address[0])
+            testConnClient(connection)
+        except TLSLocalAlert as alert:
+            if alert.description != AlertDescription.fido2_bad_request:
+                raise
+
+        assert(fido2_client.state == ClientState.handshake_failed)
+        assert (connection.session is None)
+        connection.close()
+
+        test_no += 1
+
+        print("Test {0} - FIDO2 abort assertion".format(test_no))
+        synchro.recv(1)
+        connection = connect()
+        settings = HandshakeSettings()
+        settings.versions = [(3, 4)]
+        settings.minVersion = (3, 4)
+        settings.use_fido2_extension = True
+        abort_event = Event()
+        abort_event.set()
+        fido2_client = Fido2ClientWrapper(address[0], user_name,
+                                          abort_event=abort_event)
+        # first handshake
+        connection._handshakeClientFIDO2Helper(fido2_client=fido2_client,
+                                               settings=settings,
+                                               serverName=address[0])
+
+        synchro.recv(1)
+        connection = connect()
+        settings = HandshakeSettings()
+        settings.versions = [(3, 4)]
+        settings.minVersion = (3, 4)
+        settings.use_fido2_extension = True
+
+        try:
+            # second handshake
+            connection._handshakeClientFIDO2Helper(fido2_client=fido2_client,
+                                                   settings=settings,
+                                                   serverName=address[0])
+            testConnClient(connection)
+        except TLSLocalAlert as alert:
+            if alert.description != AlertDescription.user_canceled:
+                raise
+        assert (fido2_client.state == ClientState.handshake_failed)
+        assert (connection.session is None)
+        connection.close()
+
+        test_no += 1
+
+        print("Test {0} - FIDO2 FI: handshake".format(test_no))
+        synchro.recv(1)
+        connection = connect()
+        settings = HandshakeSettings()
+        settings.versions = [(3, 4)]
+        settings.minVersion = (3, 4)
+        settings.use_fido2_extension = True
+        fido2_client = Fido2ClientWrapper(address[0])
+        connection._handshakeClientFIDO2Helper(fido2_client=fido2_client,
+                                               settings=settings,
+                                               serverName=address[0])
+        testConnClient(connection)
+        connection.close()
+
+        test_no += 1
 
     print("Test {0} - good X.509 (plus SNI)".format(test_no))
     synchro.recv(1)
@@ -1088,6 +1242,7 @@ def serverTestCmd(argv):
         x509KeyRSAPSS = parsePEMKey(f.read(), private=True,
                                     implementations=["python"])
 
+
     test_no = 0
 
     print("Test {0} - Anonymous server handshake".format(test_no))
@@ -1098,6 +1253,142 @@ def serverTestCmd(argv):
     connection.close()
 
     test_no += 1
+
+    if fido2_device:
+        # For the FIDO2 tests to be successful the user database stored in
+        # "fido2.db" must contain a user with the name "test.user" and a user
+        # using a resident PKCS to allow the FI mode of the handshake. This
+        # may be the same user. They need to be registered for the server
+        # running at "localhost".
+
+        print("Test {0} - FIDO2 FN: first handshake".format(test_no))
+        synchro.send(b'R')
+        connection = connect()
+        fido2_params = {"db_path": os.path.join(dir, "fido2.db"), "rp_id": \
+            address[0], "pre_share_eph_user_name": True}
+        settings = HandshakeSettings()
+        settings.versions = [(3, 4)]
+        settings.minVersion = (3, 4)
+        settings.use_fido2_extension = True
+        connection.handshakeServer(fido2_params=fido2_params, settings=settings,
+                                   certChain=x509Chain, privateKey=x509Key)
+        testConnServer(connection)
+        connection.close()
+
+        test_no += 1
+
+        print("Test {0} - FIDO2 FN: second handshake".format(test_no))
+        synchro.send(b'R')
+        connection = connect()
+        settings = HandshakeSettings()
+        settings.versions = [(3, 4)]
+        settings.minVersion = (3, 4)
+        connection.handshakeServer(fido2_params=fido2_params, settings=settings,
+                                   certChain=x509Chain, privateKey=x509Key)
+        testConnServer(connection)
+        assert (isinstance(connection.session.clientCertChain, X509CertChain))
+        connection.close()
+
+        test_no += 1
+
+        print("Test {0} - FIDO2 FN: single handshake".format(test_no))
+        synchro.send(b'R')
+        connection = connect()
+        settings = HandshakeSettings()
+        settings.versions = [(3, 4)]
+        settings.minVersion = (3, 4)
+        settings.ticketKeys = [getRandomBytes(32)]  # for resumption
+        connection.handshakeServer(fido2_params=fido2_params, settings=settings,
+                                   certChain=x509Chain, privateKey=x509Key)
+        testConnServer(connection)
+        assert (isinstance(connection.session.clientCertChain, X509CertChain))
+        connection.close()
+
+        test_no += 1
+
+        # resume
+        print("Test {0} - resumption after FIDO2".format(test_no))
+        synchro.send(b'R')
+        connection = connect()
+        connection.handshakeServer(certChain=x509Chain, privateKey=x509Key,
+                                   settings=settings)
+        testConnServer(connection)
+        assert connection.session.clientCertChain is None
+        connection.close()
+
+        test_no += 1
+
+        print("Test {0} - FIDO2 bad server request".format(test_no))
+        synchro.send(b'R')
+        connection = connect()
+        settings = HandshakeSettings()
+        settings.versions = [(3, 4)]
+        settings.minVersion = (3, 4)
+        settings.ticketKeys = [getRandomBytes(32)]  # for resumption
+        fido2_params['rp_id'] = "badrpid"
+        try:
+            connection.handshakeServer(fido2_params=fido2_params,
+                                       settings=settings,
+                                       certChain=x509Chain,
+                                       privateKey=x509Key)
+            testConnServer(connection)
+        except TLSRemoteAlert as alert:
+            if alert.description != AlertDescription.fido2_bad_request:
+                raise
+
+        assert (connection.session is None)
+        connection.close()
+
+        test_no += 1
+
+        print("Test {0} - FIDO2 abort assertion".format(test_no))
+        synchro.send(b'R')
+        connection = connect()
+        settings = HandshakeSettings()
+        settings.versions = [(3, 4)]
+        settings.minVersion = (3, 4)
+        fido2_params['rp_id'] = "localhost" # reset
+        # first handshake
+        connection.handshakeServer(fido2_params=fido2_params,
+                                   settings=settings,
+                                   certChain=x509Chain,
+                                   privateKey=x509Key)
+
+        synchro.send(b'R')
+        connection = connect()
+        settings = HandshakeSettings()
+        settings.versions = [(3, 4)]
+        settings.minVersion = (3, 4)
+        try:
+            # second handshake
+            connection.handshakeServer(fido2_params=fido2_params,
+                                       settings=settings,
+                                       certChain=x509Chain,
+                                       privateKey=x509Key)
+            testConnServer(connection)
+        except TLSRemoteAlert as alert:
+            if alert.description != AlertDescription.user_canceled:
+                raise
+
+        assert (connection.session is None)
+        connection.close()
+
+        test_no += 1
+
+        print("Test {0} - FIDO2 FI: handshake".format(test_no))
+        synchro.send(b'R')
+        connection = connect()
+        settings = HandshakeSettings()
+        settings.versions = [(3, 4)]
+        settings.minVersion = (3, 4)
+        settings.ticketKeys = [getRandomBytes(32)]  # for resumption
+        connection.handshakeServer(fido2_params=fido2_params, settings=settings,
+                                   certChain=x509Chain, privateKey=x509Key)
+        testConnServer(connection)
+        assert (isinstance(connection.session.clientCertChain, X509CertChain))
+        connection.close()
+
+        test_no += 1
 
     print("Test {0} - good X.509 (plus SNI)".format(test_no))
     synchro.send(b'R')
@@ -1880,8 +2171,11 @@ def serverTestCmd(argv):
 
     print("Test succeeded")
 
+fido2_device = False
 
 if __name__ == '__main__':
+    dev = next(CtapHidDevice.list_devices(), None)
+    fido2_device = bool(dev is not None)
     if len(sys.argv) < 2:
         printUsage("Missing command")
     elif sys.argv[1] == "client"[:len(sys.argv[1])]:

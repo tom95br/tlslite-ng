@@ -12,8 +12,9 @@ from .utils.codec import Writer, Parser
 from .constants import NameType, ExtensionType, CertificateStatusType, \
         SignatureAlgorithm, HashAlgorithm, SignatureScheme, \
         PskKeyExchangeMode, CertificateType, GroupName, ECPointFormat, \
-        HeartbeatMode
+        HeartbeatMode, FIDO2Mode
 from .errors import TLSInternalError
+from enum import IntEnum, unique
 
 
 class TLSExtension(object):
@@ -2096,6 +2097,115 @@ class RecordSizeLimitExtension(IntExtension):
             2, 'record_size_limit', ExtensionType.record_size_limit)
 
 
+class FIDO2ClientHelloExtension(TLSExtension):
+    """
+    ClientHello extension indicating the use of FIDO2. This extension may be
+    sent in the FIDO2 prehandshake or the regular handshake. The temporal user
+    name may be transmitted.
+    """
+
+    class FLAG(IntEnum):
+        """ Extension flags. """
+        EPH_USER_NAME_SET = 1
+
+    def __init__(self):
+        """ Create instance. """
+        super(FIDO2ClientHelloExtension, self).__init__(
+            extType=ExtensionType.fido2_clienthello_extension)
+        self.eph_user_name = None
+        self.flags = 0
+
+    @property
+    def mode(self):
+        """
+        Get the FIDO2 mode
+        :return:
+        """
+        return self.flags >> 4
+
+    def _set_mode(self, mode):
+        """
+        Set the FIDO2Mode
+        :return:
+        """
+        mode = mode << 4
+        self.flags |= mode
+
+    def create(self, mode, eph_user_name=None):
+        """
+        Set values of the extension.
+        :param mode: The Mode of the handshake as FIDO2Mode
+        :param eph_user_name: The ephemeral user name previously generated.
+        :return The FIDO2ClientHelloExtension
+        """
+
+        # set mode
+        if mode == FIDO2Mode.fido2_with_id:
+            eph_user_name = None
+        self._set_mode(mode)
+
+        # set ephemeral user name
+        if eph_user_name:
+            self.eph_user_name = eph_user_name
+            self.set_flag(FIDO2ClientHelloExtension.FLAG.EPH_USER_NAME_SET)
+
+        return self
+
+    def flag_set(self, flag):
+        """ Return true if given flag is set, false otherwise"""
+        return bool(self.flags & flag)
+
+    def set_flag(self, flag):
+        """ Set a given flag to true """
+        self.flags |= flag
+
+    def parse(self, parser):
+        """ Deserialise the data from on the wire representation. """
+        if parser.getRemainingLength() == 0:
+            self.flags = None
+            self.eph_user_name = None
+            return self
+
+        # get flags
+        self.flags = parser.get(1)
+
+        # get temp_user_name
+        if self.flag_set(FIDO2ClientHelloExtension.FLAG.EPH_USER_NAME_SET):
+            self.eph_user_name = parser.getFixBytes(32)
+
+        if parser.getRemainingLength():
+            raise SyntaxError("Trailing bytes in FIDO2ClientHelloExtension")
+
+        return self
+
+    @property
+    def extData(self):
+        """ Serialise the object."""
+        writer = Writer()
+
+        # write flag bytes
+        writer.addOne(self.flags)
+
+        # write temp user name
+        if self.flag_set(FIDO2ClientHelloExtension.FLAG.EPH_USER_NAME_SET):
+            writer.bytes += self.eph_user_name
+
+        return writer.bytes
+
+    def to_string(self):
+        """ String representation of the extension"""
+        np = "[not provided]"
+        result = "FIDO2ClientHelloExtension"
+        result += "\n\tFlags: " + str(self.flags)
+        result += "\n\teph_user_name: "
+        if self.flag_set(FIDO2ClientHelloExtension.FLAG.EPH_USER_NAME_SET):
+            result += self.eph_user_name.hex()
+        else:
+            result += np
+        return result
+
+
+
 TLSExtension._universalExtensions = \
     {
         ExtensionType.server_name: SNIExtension,
@@ -2117,7 +2227,8 @@ TLSExtension._universalExtensions = \
         ExtensionType.pre_shared_key: PreSharedKeyExtension,
         ExtensionType.psk_key_exchange_modes: PskKeyExchangeModesExtension,
         ExtensionType.cookie: CookieExtension,
-        ExtensionType.record_size_limit: RecordSizeLimitExtension}
+        ExtensionType.record_size_limit: RecordSizeLimitExtension,
+        ExtensionType.fido2_clienthello_extension: FIDO2ClientHelloExtension}
 
 TLSExtension._serverExtensions = \
     {

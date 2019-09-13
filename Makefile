@@ -40,8 +40,8 @@ dist: docs
 
 .PHONY : test
 test:
-	python tests/tlstest.py server localhost:4433 tests & sleep 4
-	python tests/tlstest.py client localhost:4433 tests
+	python3 tests/tlstest.py server localhost:4433 tests & sleep 4
+	python3 tests/tlstest.py client localhost:4433 tests
 
 .PHONY : test-utils
 test-utils:
@@ -56,16 +56,16 @@ test-local: test-utils
 	PYTHONPATH=. COVERAGE_FILE=.coverage.client coverage run --branch --source tlslite tests/tlstest.py client localhost:4433 tests
 
 test-dev:
-ifdef PYTHON2
-	@echo "Running test suite with Python 2"
-ifndef COVERAGE2
-	python2 -m unittest discover -v
-else
-	coverage2 run --branch --source tlslite -m unittest discover
-endif
-	PYTHONPATH=. COVERAGE_FILE=.coverage.2.server coverage2 run --branch --source tlslite tests/tlstest.py server localhost:4433 tests & sleep 4
-	PYTHONPATH=. COVERAGE_FILE=.coverage.2.client coverage2 run --branch --source tlslite tests/tlstest.py client localhost:4433 tests
-endif
+#ifdef PYTHON2
+#	@echo "Running test suite with Python 2"
+#ifndef COVERAGE2
+#	python2 -m unittest discover -v
+#else
+#	coverage2 run --branch --source tlslite -m unittest discover
+#endif
+#	PYTHONPATH=. COVERAGE_FILE=.coverage.2.server coverage2 run --branch --source tlslite tests/tlstest.py server localhost:4433 tests & sleep 4
+#	PYTHONPATH=. COVERAGE_FILE=.coverage.2.client coverage2 run --branch --source tlslite tests/tlstest.py client localhost:4433 tests
+#endif
 ifdef PYTHON3
 	@echo "Running test suite with Python 3"
 ifndef COVERAGE2

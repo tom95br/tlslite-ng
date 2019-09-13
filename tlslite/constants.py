@@ -5,6 +5,7 @@
 #   Dimitris Moraitis - Anon ciphersuites
 #   Dave Baggett (Arcode Corporation) - canonicalCipherName
 #   Yngve Pettersen (ported by Paul Sokolovsky) - TLS 1.2
+#   Tom-Lukas Breikopf - Added constants necessary for the FIDO2 extension
 #
 # See the LICENSE file for legal information regarding use of this file.
 
@@ -124,6 +125,10 @@ class HandshakeType(TLSEnum):
     certificate_status = 22
     next_protocol = 67
     message_hash = 254  # TLS 1.3
+    fido2_name_request = 26 # NOT SPECIFIED IN RFC
+    fido2_name_response = 27 # NOT SPECIFIED IN RFC
+    fido2_assertion_request = 28 # NOT SPECIFIED IN RFC
+    fido2_assertion_response = 29 # NOT SPECIFIED IN RFC
 
 
 class ContentType(TLSEnum):
@@ -172,6 +177,7 @@ class ExtensionType(TLSEnum):
     supports_npn = 13172
     tack = 0xF300
     renegotiation_info = 0xff01  # RFC 5746
+    fido2_clienthello_extension = 55 # NOT SPECIFIED IN RFC
 
 
 class HashAlgorithm(TLSEnum):
@@ -463,6 +469,9 @@ class AlertDescription(TLSEnum):
     bad_certificate_hash_value = 114  # RFC 6066
     unknown_psk_identity = 115
     no_application_protocol = 120  # RFC 7301
+    fido2_bad_request = 151 # NOT SPECIFIED IN RFC
+    fido2_authentication_error = 152 # NOT SPECIFIED IN RFC
+    fido2_required = 153 # NOT SPECIFIED IN RFC
 
 
 class PskKeyExchangeMode(TLSEnum):
@@ -1298,3 +1307,27 @@ class Fault:
         badMAC: "bad MAC",\
         badPadding: "bad padding"
         }
+
+
+class FIDO2Mode(TLSEnum):
+
+    fido2_with_id = 1
+    fido2_with_name = 2
+
+    all = [fido2_with_id, fido2_with_name]
+
+    @staticmethod
+    def from_string(s):
+        """
+        Convert string to FIDO2Mode
+        :param s: FIDO2Mode as string as present in a client certificate
+        :return: FIDO2Mode
+        """
+
+        for mode in FIDO2Mode.all:
+            if FIDO2Mode.toRepr(mode) == s:
+                return mode
+
+        return None
+
+

@@ -1,4 +1,6 @@
-# Author: Trevor Perrin
+# Authors:
+#    Trevor Perrin
+#    Tom-Lukas Breitkopf: Allow check on FIDO2 issued certificate
 # See the LICENSE file for legal information regarding use of this file.
 
 """Class representing an X.509 certificate chain."""
@@ -7,6 +9,7 @@ from .utils import cryptomath
 from .utils.tackwrapper import *
 from .utils.pem import *
 from .x509 import X509
+from .constants import FIDO2Mode
 
 class X509CertChain(object):
     """This class represents a chain of X.509 certificates.
@@ -88,4 +91,57 @@ class X509CertChain(object):
                 else:
                     tackExt = tlsCert.tackExt
         return tackExt
-                
+
+    def get_endentity_common_name(self):
+        """
+        Get the common name of the end entity of the certificate chain
+        :return: The common name as a string
+        """
+        if self.getNumCerts() > 0:
+            return self.x509List[0].get_subject_common_name()
+        return None
+
+    def is_fido2_cert_chain(self):
+        """
+        Return True if this is a certificate used to signal successful FIDO2
+        authentication.
+        :return:
+        """
+        if self.getNumCerts() > 0:
+            organization_string = self.x509List[
+                0].get_subject_organization_name()
+            if organization_string == "fido2_authentication_cert":
+                return True
+
+        return False
+
+    def get_fido2_mode(self):
+        """
+        Get the mode of the FIDO2 authentication this certificate was used for.
+        :return: The FIDO2Mode
+        """
+        if not self.is_fido2_cert_chain():
+            return None
+
+        if self.getNumCerts() > 0:
+            organization_string = self.x509List[
+                0].get_subject_organization_unit()
+            return FIDO2Mode.from_string(organization_string)
+
+        return None
+
+    def get_fido2_user_name(self):
+        """
+        Get the user name of the FIDO2 authenticated user.
+        :return: The user name as a string
+        """
+        return self.get_endentity_common_name()
+
+    def get_fido2_user_id(self):
+        """
+        Get the user id of the FIDO2 authenticated user.
+        :return: The user id as bytearray
+        """
+        if self.getNumCerts() > 0:
+            return self.x509List[0].get_subject_state()
+        return None

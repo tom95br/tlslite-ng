@@ -19,6 +19,7 @@ class ClientHelper(object):
     def __init__(self,
                  username=None, password=None,
                  certChain=None, privateKey=None,
+                 use_fido2=False, domain_name=None,
                  checker=None,
                  settings=None,
                  anon=False,
@@ -29,9 +30,10 @@ class ClientHelper(object):
 
          - username, password (SRP)
          - certChain, privateKey (certificate)
+         - use_fido2, domain_name (and user name) (FIDO2)
 
         For server authentication, you can either rely on the
-        implicit mutual authentication performed by SRP,
+        implicit mutual authentication performed by SRP, FIDO2,
         or you can do certificate-based server
         authentication with one of these argument combinations:
 
@@ -48,8 +50,8 @@ class ClientHelper(object):
         :py:class:`~tlslite.tlsconnection.TLSConnection` for details on which
         exceptions might be raised.
 
-        :param str username: SRP username.  Requires the
-            'password' argument.
+        :param str username: SRP or FIDO2 username.  Requires the
+            'password' argument for SRP.
 
         :param str password: SRP password for mutual authentication.
             Requires the 'username' argument.
@@ -60,6 +62,14 @@ class ClientHelper(object):
 
         :param RSAKey privateKey: Private key for client authentication.
             Requires the 'certChain' argument.  Excludes the SRP arguments.
+
+        :param bool use_fido2: Indication whether or not to use FIDO2
+            authentication. Requires the 'domain_name' parameter or 'host'
+            as domain name.
+
+        :param str domain_name: The domain name of the server to authenticate
+            against using FIDO2. May be omitted if host is given as a domain
+            name.
 
         :param Checker checker: Callable object called after handshaking to
             evaluate the connection and raise an Exception if necessary.
@@ -83,35 +93,12 @@ class ClientHelper(object):
 
         self.username = None
         self.password = None
+        self.use_fido2 = False
+        self.domain_name = None
         self.certChain = None
         self.privateKey = None
         self.checker = None
         self.anon = anon
-
-        #SRP Authentication
-        if username and password and not \
-                (certChain or privateKey):
-            self.username = username
-            self.password = password
-
-        #Certificate Chain Authentication
-        elif certChain and privateKey and not \
-                (username or password):
-            self.certChain = certChain
-            self.privateKey = privateKey
-
-        #No Authentication
-        elif not password and not username and not \
-                certChain and not privateKey:
-            pass
-
-        else:
-            raise ValueError("Bad parameters")
-
-        self.checker = checker
-        self.settings = settings
-
-        self.tlsSession = None
 
         if host is not None and not self._isIP(host):
             # name for SNI so port can't be sent
@@ -123,6 +110,41 @@ class ClientHelper(object):
                 raise ValueError("Invalid hostname: {0}".format(host))
         else:
             self.serverName = None
+
+        domain_name = domain_name or self.serverName
+
+        #SRP Authentication
+        if username and password and not \
+                (certChain or privateKey or use_fido2 or domain_name):
+            self.username = username
+            self.password = password
+
+        #Certificate Chain Authentication
+        elif certChain and privateKey and not \
+                (username or password or use_fido2 or domain_name):
+            self.certChain = certChain
+            self.privateKey = privateKey
+
+        # FIDO2 authentication
+        elif use_fido2 and domain_name and not \
+                (password or certChain or privateKey):
+            self.use_fido2 = True
+            self.domain_name = domain_name
+            self.username = username
+
+        #No Authentication
+        elif not password and not username and not \
+                certChain and not privateKey and not \
+                use_fido2 and not (domain_name and not host):
+            pass
+
+        else:
+            raise ValueError("Bad parameters")
+
+        self.checker = checker
+        self.settings = settings
+
+        self.tlsSession = None
 
     @staticmethod
     def _isIP(address):
@@ -148,6 +170,11 @@ class ClientHelper(object):
                                              settings=self.settings,
                                              session=self.tlsSession,
                                              serverName=self.serverName)
+        if self.use_fido2 and self.domain_name:
+            tlsConnection.handshakeClientFIDO2(domain_name=self.domain_name,
+                                               user_name=self.username,
+                                               checker=self.checker,
+                                               serverName=self.serverName)
         elif self.anon:
             tlsConnection.handshakeClientAnonymous(session=self.tlsSession,
                                                    settings=self.settings,

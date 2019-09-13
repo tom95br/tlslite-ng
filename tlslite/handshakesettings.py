@@ -2,6 +2,7 @@
 #   Trevor Perrin
 #   Dave Baggett (Arcode Corporation) - cleanup handling of constants
 #   Yngve Pettersen (ported by Paul Sokolovsky) - TLS 1.2
+#   Tom-Lukas Breitkopf - Add use_fido2 to settings
 #
 # See the LICENSE file for legal information regarding use of this file.
 
@@ -252,6 +253,8 @@ class HandshakeSettings(object):
         self.usePaddingExtension = True
         self.useExtendedMasterSecret = True
         self.requireExtendedMasterSecret = False
+        self.use_fido2_extension = False
+        self.force_fido2_extension = False
         # PSKs
         self.pskConfigs = []
         self.psk_modes = list(PSK_MODES)
@@ -429,6 +432,14 @@ class HandshakeSettings(object):
         if other.use_heartbeat_extension not in (True, False):
             raise ValueError("use_heartbeat_extension must be True or False")
 
+        if other.use_fido2_extension not in (True, False):
+            raise ValueError("use_fido2_extension must be True or False")
+        if other.use_fido2_extension and other.maxVersion < (3, 4):
+            raise ValueError("TLS Version 1.3 needed to support FIDO2 "
+                             "authentication")
+        if other.force_fido2_extension and not other.use_fido2_extension:
+            raise ValueError("FIDO2 extension must be in use to be forced")
+
         if other.heartbeat_response_callback and not other.use_heartbeat_extension:
             raise ValueError("heartbeat_response_callback requires "
                              "use_heartbeat_extension")
@@ -504,6 +515,8 @@ class HandshakeSettings(object):
         other.sendFallbackSCSV = self.sendFallbackSCSV
         other.useEncryptThenMAC = self.useEncryptThenMAC
         other.usePaddingExtension = self.usePaddingExtension
+        other.use_fido2_extension = self.use_fido2_extension
+        other.force_fido2_extension = self.force_fido2_extension
         # session tickets
         other.padding_cb = self.padding_cb
         other.ticketKeys = self.ticketKeys

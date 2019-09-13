@@ -15,6 +15,7 @@ class POP3_TLS(POP3, ClientHelper):
                  timeout=socket._GLOBAL_DEFAULT_TIMEOUT,
                  username=None, password=None,
                  certChain=None, privateKey=None,
+                 use_fido2=False, domain_name=None,
                  checker=None,
                  settings=None):
         """Create a new POP3_TLS.
@@ -24,9 +25,10 @@ class POP3_TLS(POP3, ClientHelper):
 
          - username, password (SRP)
          - certChain, privateKey (certificate)
+         - use_fido2, domain_name (and username) (FIDO2)
 
         For server authentication, you can either rely on the
-        implicit mutual authentication performed by SRP or
+        implicit mutual authentication performed by SRP, FIDO2, or
         you can do certificate-based server
         authentication with one of these argument combinations:
 
@@ -48,7 +50,8 @@ class POP3_TLS(POP3, ClientHelper):
         :param port: Port to connect to.
 
         :type username: str
-        :param username: SRP username.
+        :param username: SRP or FIDO2 username.  Requires the
+            'password' argument for SRP.
 
         :type password: str
         :param password: SRP password for mutual authentication.
@@ -61,6 +64,16 @@ class POP3_TLS(POP3, ClientHelper):
         :type privateKey: ~tlslite.utils.rsakey.RSAKey
         :param privateKey: Private key for client authentication.
             Requires the 'certChain' argument.  Excludes the SRP argument.
+
+        :type use_fido2: bool
+        :param use_fido2: Indication whether or not to use FIDO2
+            authentication. Requires the 'domain_name' parameter or 'host'
+            as domain name.
+
+        :type domain_name: str
+        :param domain_name: The domain name of the server to authenticate
+            against using FIDO2. May be omitted if host is given as a domain
+            name.
 
         :type checker: ~tlslite.checker.Checker
         :param checker: Callable object called after handshaking to
@@ -77,6 +90,7 @@ class POP3_TLS(POP3, ClientHelper):
         ClientHelper.__init__(self,
                  username, password,
                  certChain, privateKey,
+                 use_fido2, domain_name,
                  checker,
                  settings)
         connection = TLSConnection(sock) 

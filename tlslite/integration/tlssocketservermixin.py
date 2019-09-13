@@ -51,10 +51,13 @@ class TLSSocketServerMixIn:
 
 
     def finish_request(self, sock, client_address):
-        tlsConnection = TLSConnection(sock)
-        if self.handshake(tlsConnection) == True:
-            self.RequestHandlerClass(tlsConnection, client_address, self)
-            tlsConnection.close()
+        try:
+            tlsConnection = TLSConnection(sock)
+            if self.handshake(tlsConnection) == True:
+                self.RequestHandlerClass(tlsConnection, client_address, self)
+                tlsConnection.close()
+        except OSError:
+            print("Connection closed before data was received")
 
     #Implement this method to do some form of handshaking.  Return True
     #if the handshake finishes properly and the request is authorized.

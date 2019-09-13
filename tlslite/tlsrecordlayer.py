@@ -5,6 +5,7 @@
 #   Martin von Loewis - python 3 port
 #   Yngve Pettersen (ported by Paul Sokolovsky) - TLS 1.2
 #   Hubert Kario
+#   Tom-Lukas Breitkopf - Add FIDO2 message types
 #
 # See the LICENSE file for legal information regarding use of this file.
 
@@ -943,6 +944,14 @@ class TLSRecordLayer(object):
                     yield EncryptedExtensions().parse(p)
                 elif subType == HandshakeType.new_session_ticket:
                     yield NewSessionTicket().parse(p)
+                elif subType == HandshakeType.fido2_name_request:
+                    yield FIDO2NameRequest().parse(p)
+                elif subType == HandshakeType.fido2_name_response:
+                    yield FIDO2NameResponse().parse(p)
+                elif subType == HandshakeType.fido2_assertion_request:
+                    yield FIDO2AssertionRequest().parse(p)
+                elif subType == HandshakeType.fido2_assertion_response:
+                    yield FIDO2AssertionResponse().parse(p)
                 else:
                     raise AssertionError()
 

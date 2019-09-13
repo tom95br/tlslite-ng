@@ -1,6 +1,7 @@
 # Authors: 
 #   Trevor Perrin
 #   Dave Baggett (Arcode Corporation) - Added TLSUnsupportedError.
+#   Tom-Lukas Breitkopf - Added errors specific to the FIDO2 extension
 #
 # See the LICENSE file for legal information regarding use of this file.
 
@@ -85,7 +86,11 @@ class TLSAlert(TLSError):
         AlertDescription.inappropriate_fallback: "inappropriate_fallback",\
         AlertDescription.user_canceled: "user_canceled",\
         AlertDescription.no_renegotiation: "no_renegotiation",\
-        AlertDescription.unknown_psk_identity: "unknown_psk_identity"}
+        AlertDescription.unknown_psk_identity: "unknown_psk_identity",\
+        AlertDescription.fido2_bad_request: "fido2_bad_request", \
+        AlertDescription.fido2_authentication_error:
+            "fido2_authentication_error", \
+        AlertDescription.fido2_required: "fido2_required"}
 
 
 class TLSLocalAlert(TLSAlert):

@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 # Author: Trevor Perrin
 # See the LICENSE file for legal information regarding use of this file.
@@ -18,7 +18,9 @@ setup(name="tlslite-ng",
       description="Pure python implementation of SSL and TLS.",
       long_description=README,
       license="LGPLv2",
-      scripts=["scripts/tls.py", "scripts/tlsdb.py"],
+      scripts=["scripts/tls.py", "scripts/tlsdb.py",
+               "scripts/fido2_server.py",
+               "scripts/generate_client_certificate.sh"],
       packages=["tlslite", "tlslite.utils", "tlslite.integration"],
       package_data={
                     'package1': ['LICENSE', 'README.md']},

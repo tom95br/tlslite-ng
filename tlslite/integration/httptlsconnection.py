@@ -26,6 +26,7 @@ class HTTPTLSConnection(httplib.HTTPConnection, ClientHelper):
                 source_address=None,
                 username=None, password=None,
                 certChain=None, privateKey=None,
+                use_fido2=False, domain_name=None,
                 checker=None,
                 settings=None,
                 ignoreAbruptClose=False,
@@ -37,9 +38,10 @@ class HTTPTLSConnection(httplib.HTTPConnection, ClientHelper):
 
           - username, password (SRP)
           - certChain, privateKey (certificate)
+          - use_fido2 (, domain_name and username) (FIDO2)
 
         For server authentication, you can either rely on the
-        implicit mutual authentication performed by SRP
+        implicit mutual authentication performed by SRP, FIDO2,
         or you can do certificate-based server
         authentication with one of these argument combinations:
 
@@ -65,8 +67,8 @@ class HTTPTLSConnection(httplib.HTTPConnection, ClientHelper):
         :param port: Port to connect to.
 
         :type username: str
-        :param username: SRP username.  Requires the
-            'password' argument.
+        :param username: SRP or FIDO2 username.  Requires the
+            'password' argument for SRP.
 
         :type password: str
         :param password: SRP password for mutual authentication.
@@ -79,6 +81,16 @@ class HTTPTLSConnection(httplib.HTTPConnection, ClientHelper):
         :type privateKey: ~tlslite.utils.rsakey.RSAKey
         :param privateKey: Private key for client authentication.
             Requires the 'certChain' argument.  Excludes the SRP arguments.
+
+        :type use_fido2: bool
+        :param use_fido2: Indication whether or not to use FIDO2
+            authentication. Requires the 'domain_name' parameter or 'host'
+            as domain name.
+
+        :type domain_name: str
+        :param domain_name: The domain name of the server to authenticate
+            against using FIDO2. May be omitted if host is given as a domain
+            name.
 
         :type checker: ~tlslite.checker.Checker
         :param checker: Callable object called after handshaking to
@@ -108,6 +120,7 @@ class HTTPTLSConnection(httplib.HTTPConnection, ClientHelper):
         ClientHelper.__init__(self,
                               username, password,
                               certChain, privateKey,
+                              use_fido2, domain_name,
                               checker,
                               settings,
                               anon,

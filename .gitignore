@@ -1,3 +1,5 @@
+*.db
+*.bin
 *.pyc
 .project
 .pydevproject
@@ -9,3 +11,4 @@ pylint_report.txt
 build/
 docs/_build/
 htmlcov/
+.idea/
